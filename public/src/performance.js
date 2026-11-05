@@ -1,3 +1,4 @@
+import {t} from './i18n.js';
 const COUNTS=[0,16,64,128],WARMUP=24,SAMPLES=90,REPEATS=3;
 const quantile=(values,p)=>{const sorted=[...values].sort((a,b)=>a-b);return sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))];};
 export function createPerformance({renderer,setup,frame,restore,ready,counts}){
@@ -9,7 +10,7 @@ export function createPerformance({renderer,setup,frame,restore,ready,counts}){
   function environment(){return {width:renderer.domElement.width,height:renderer.domElement.height,pixelRatio:renderer.getPixelRatio(),renderer:device};}
   function run(){
     if(active)return;
-    if(!ready()){error='배 모델 로딩 중이거나 온라인 접속 중입니다. 로컬에서 실행해 주세요.';return;}
+    if(!ready()){error=t('배 모델 로딩 중이거나 온라인 접속 중입니다. 로컬에서 실행해 주세요.');return;}
     error=null;results=[];cachedSummary=[];active=true;panel=true;window.__studio.pause();
     const cases=[];
     for(let repeat=0;repeat<REPEATS;repeat++)for(const bots of COUNTS){
@@ -23,17 +24,17 @@ export function createPerformance({renderer,setup,frame,restore,ready,counts}){
       restore(botCount,optimized);window.__studio.start();
     }
     function nextCase(){
-      if(caseIndex===cases.length){progress='측정 완료';end();return;}
+      if(caseIndex===cases.length){progress=t('측정 완료');end();return;}
       const test=cases[caseIndex];index=0;times=[];draws=[];
-      progress=`${caseIndex+1}/${cases.length} · 봇 ${test.bots} · ${test.optimized?'최적화':'기준'} · 반복 ${test.repeat}`;
+      progress=t('{i}/{n} · 봇 {bots} · {mode} · 반복 {repeat}',{i:caseIndex+1,n:cases.length,bots:test.bots,mode:t(test.optimized?'최적화':'기준'),repeat:test.repeat});
       setup(test.bots,test.optimized);
       const hud=window.__studio.hud;hud.clear();
       hud.panel('benchmark-panel',{x:.02,y:.02,w:.65,h:.13,fill:'rgba(10,30,34,.9)'});
-      hud.text('benchmark-title','로컬 봇 성능 측정 중 · 완료 후 항해로 돌아갑니다',{x:.035,y:.045,size:14,color:'#f7f8ef'});
+      hud.text('benchmark-title',t('로컬 봇 성능 측정 중 · 완료 후 항해로 돌아갑니다'),{x:.035,y:.045,size:14,color:'#f7f8ef'});
       hud.text('benchmark-progress',progress,{x:.035,y:.095,size:13,color:'#ead8a7'});
       worker.postMessage('tick');
     }
-    worker.onerror=event=>end(event.message||'측정용 시계를 시작하지 못했습니다.');
+    worker.onerror=event=>end(event.message||t('측정용 시계를 시작하지 못했습니다.'));
     worker.onmessage=async ({data})=>{
       if(data.type==='tick'){
         try{
@@ -41,7 +42,7 @@ export function createPerformance({renderer,setup,frame,restore,ready,counts}){
           await window.__studio.step(0);
           // Synchronize GPU completion. This is serialized frame service time, NOT gameplay FPS.
           gl.finish();
-          if(gl.isContextLost())throw new Error('WebGL 컨텍스트가 중단되었습니다.');
+          if(gl.isContextLost())throw new Error(t('WebGL 컨텍스트가 중단되었습니다.'));
           worker.postMessage('done');
         }catch(e){end(e.message);}
       }else{

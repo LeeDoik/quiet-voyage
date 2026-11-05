@@ -1,3 +1,4 @@
+import {t} from './i18n.js';
 export const TRACE_LIFE=90,TRACE_COOLDOWN=18,PULSE_LIFE=4,PULSE_COOLDOWN=5;
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const validPosition=p=>p&&finite(p.x)&&finite(p.z)&&Math.abs(p.x)<1e6&&Math.abs(p.z)<1e6;
@@ -26,13 +27,13 @@ export function createQuietSea(){
     act(kind,boat){
       if(!validPosition(boat))return false;
       if(kind==='trace'){
-        if(time<traceReady){say('빛이 다시 모일 때까지 잠시 기다려요');return false;}
+        if(time<traceReady){say(t('빛이 다시 모일 때까지 잠시 기다려요'));return false;}
         traceReady=time+TRACE_COOLDOWN;
         const event={seq:++sequence,x:boat.x+Math.sin(boat.yaw)*3,z:boat.z+Math.cos(boat.yaw)*3,born:time,age:0};
-        ownMarks.push(event);ownMarks=ownMarks.slice(-2);addTrace(localId,event);say('지나온 물길에 빛을 남겼어요');
+        ownMarks.push(event);ownMarks=ownMarks.slice(-2);addTrace(localId,event);say(t('지나온 물길에 빛을 남겼어요'));
       }else if(kind==='pulse'){
         if(time<pulseReady)return false;
-        pulseReady=time+PULSE_COOLDOWN;ownPulse={seq:++sequence,x:boat.x,z:boat.z,born:time,age:0};addPulse(localId,ownPulse);say('물결에 작은 빛을 실었어요');
+        pulseReady=time+PULSE_COOLDOWN;ownPulse={seq:++sequence,x:boat.x,z:boat.z,born:time,age:0};addPulse(localId,ownPulse);say(t('물결에 작은 빛을 실었어요'));
       }else return false;
       return true;
     },
@@ -62,8 +63,8 @@ export function createQuietSea(){
           if(actor.id===trace.owner||trace.visitors.has(actor.id)||!validPosition(actor))continue;
           if(Math.hypot(actor.x-trace.x,actor.z-trace.z)<9){
             trace.visitors.add(actor.id);trace.bloom=4;
-            if(actor.id===localId)say('누군가 남긴 빛이 피어났어요');
-            else if(trace.owner===localId)say('남겨 둔 빛에 다른 물결이 닿았어요');
+            if(actor.id===localId)say(t('누군가 남긴 빛이 피어났어요'));
+            else if(trace.owner===localId)say(t('남겨 둔 빛에 다른 물결이 닿았어요'));
           }
         }
       }
@@ -76,7 +77,7 @@ export function createQuietSea(){
         let pair=pairs.get(peer.id)||{charge:0};
         const before=pair.charge;pair.charge=Math.max(0,Math.min(1,pair.charge+dt*(aligned?1/6:-1/2)));
         pair.x=(peer.x+boat.x)/2;pair.z=(peer.z+boat.z)/2;
-        if(before<1&&pair.charge===1&&!pair.announced){say('잠시 같은 바람을 타고 있어요');pair.announced=true;}
+        if(before<1&&pair.charge===1&&!pair.announced){say(t('잠시 같은 바람을 타고 있어요'));pair.announced=true;}
         if(pair.charge===0)pair.announced=false;
         pairs.set(peer.id,pair);
       }

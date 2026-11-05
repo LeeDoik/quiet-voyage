@@ -5,18 +5,21 @@ import { createQuietWater } from './quiet-water.js';
 import { platform } from './platform.js';
 import { connectSea } from './net/sea-net.js';
 import { surface } from './sea.js';
+import { lang, t } from './i18n.js';
 
 const validPose=s=>s&&[s.x,s.y,s.z].every(v=>Number.isFinite(v)&&Math.abs(v)<1e6)&&Array.isArray(s.q)&&s.q.length===4&&s.q.every(Number.isFinite)&&Math.hypot(...s.q)>.5&&Math.hypot(...s.q)<1.5;
 // Multiplayer goes to our own sea server (server/worker.js); without one the sea is solo.
 const webNet=platform.web&&!!platform.server;
 const MAX_REMOTE=64,LABEL_RANGE=180;
-const NAME_FIRST=['푸른','고요한','은빛','작은','먼','바람의','노을빛','새벽','달빛','하얀','잔잔한','소금빛','별빛','따뜻한','느린','맑은'];
-const NAME_SECOND=['물새','고래','돛','파도','별','등대','갈매기','산호','물결','바람','섬','구름','해초','조개','수평선','나침반'];
+// [Korean, English] pairs: one pick, so a name means the same thing in both. English stays ≤16 chars ("the " + 6 + " " + 5).
+const NAME_FIRST=[['푸른','Blue'],['고요한','Still'],['은빛','Silver'],['작은','Little'],['먼','Far'],['바람의','Windy'],['노을빛','Rosy'],['새벽','Dawn'],['달빛','Moon'],['하얀','White'],['잔잔한','Calm'],['소금빛','Salt'],['별빛','Bright'],['따뜻한','Warm'],['느린','Slow'],['맑은','Clear']];
+const NAME_SECOND=[['물새','Tern'],['고래','Whale'],['돛','Sail'],['파도','Wave'],['별','Star'],['등대','Light'],['갈매기','Gull'],['산호','Coral'],['물결','Swell'],['바람','Wind'],['섬','Isle'],['구름','Cloud'],['해초','Kelp'],['조개','Shell'],['수평선','Tide'],['나침반','North']];
 function boatName(){
   const saved=platform.read('sea.name');
   if(saved&&saved.length<=16)return saved;
   const pick=list=>list[Math.floor(platform.entropy()*list.length)%list.length];
-  const name=`${pick(NAME_FIRST)} ${pick(NAME_SECOND)}호`;
+  const [a,b]=[pick(NAME_FIRST),pick(NAME_SECOND)];
+  const name=lang==='ko'?`${a[0]} ${b[0]}호`:`the ${a[1]} ${b[1]}`;
   platform.write('sea.name',name);
   return name;
 }
@@ -43,7 +46,8 @@ export function createSocial(scene) {
   const canPractice=()=>!connected;
   function makeBoat(tag){const source=scene.children.find(o=>o.userData.tag==='boat');const mesh=source&&createVesselLOD(source,tag);if(mesh)scene.add(mesh);return mesh;}
   function setLabel(boat,name){
-    const text=typeof name==='string'?name.trim().slice(0,16):'';
+    // The server sends '' for a boat without a name (older servers sent '이름 없는 배'; t() maps that too).
+    const text=Array.from(t((typeof name==='string'&&name.trim())||'이름 없는 배')).slice(0,16).join('');
     const current=boat.userData.label;
     if(current?.userData.text===text)return;
     if(current){boat.remove(current);disposeLabel(current);boat.userData.label=null;}

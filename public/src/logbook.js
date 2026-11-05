@@ -2,10 +2,11 @@
 // notices the screen shows when something is found. This voyage resets with the game; the
 // lifetime totals are kept in this browser on the web build only.
 import { platform } from './platform.js';
+import { t } from './i18n.js';
 
 const KEY = 'sea.log.v1';
 // Field guide entries, in the order the guide lists them.
-export const GUIDE = [
+export const GUIDE = ([
   ['dolphin', '돌고래', '무리 지어 숨을 쉬며 물 위로 솟고, 움직이는 배의 뱃머리 물결을 즐겨 탄다.'],
   ['humpback', '혹등고래', '멀리서 높은 숨 물보라로 먼저 보인다. 깊이 잠수할 때 꼬리를 들어 올리고, 가끔 통째로 솟구친다.'],
   ['orca', '범고래', '키 큰 등지느러미와 흰 눈무늬. 가족끼리 나란히 헤엄친다.'],
@@ -13,7 +14,7 @@ export const GUIDE = [
   ['manta', '쥐가오리', '넓은 날개로 날 듯 헤엄치다 갑자기 물 위로 뛰어올라 뒤집힌다.'],
   ['flyingfish', '날치', '긴 가슴지느러미를 펴고 수면 위를 수십 미터씩 미끄러진다.'],
   ['gull', '바닷새', '먹이가 있는 물 위를 맴돈다. 새가 모인 곳 아래를 살펴보자.'],
-];
+]).map(([key, name, about]) => [key, t(name), t(about)]);
 
 function loadTotals() {
   if (!platform.persist) return { distance: 0, time: 0, voyages: 0, islands: [], species: {} };
@@ -55,15 +56,15 @@ export function createLogbook() {
       voyage.islands.add(s.id);
       const first = !totals.islands.includes(s.id);
       if (first) { totals.islands.push(s.id); save(); }
-      record({ kind: 'island', title: s.name, description: first ? '처음 닿은 섬' : '다시 지나간 섬' });
-      say(`${s.name}${first ? ' · 처음 보는 섬' : ''}`, 4.5);
+      record({ kind: 'island', title: s.name, description: t(first ? '처음 닿은 섬' : '다시 지나간 섬') });
+      say(first ? t('{name} · 처음 보는 섬', { name: s.name }) : s.name, 4.5);
     },
     creature(n) {
       const count = (voyage.species[n.species] || 0) + 1;
       voyage.species[n.species] = count;
       const ever = totals.species[n.species] || 0;
       totals.species[n.species] = ever + 1;
-      if (count === 1) record({ kind: 'creature', title: n.name, description: ever ? n.text : `${n.text} · 처음 만난 생물` });
+      if (count === 1) record({ kind: 'creature', title: n.name, description: ever ? n.text : t('{text} · 처음 만난 생물', { text: n.text }) });
       say(n.text, 5);
       save();
     },

@@ -15,6 +15,7 @@ export function createOceanMaterial() {
       mist: {value: .00115},
       night: env.night, rain: env.rain,
       sunDir: {value: new THREE.Vector3(-210, 95, -650).normalize()},
+      moonDir: {value: new THREE.Vector3(230, 300, -620).normalize()},
       shores: {value: Array.from({length: SHORE_SLOTS}, () => new THREE.Vector4(0, 0, 0, 0))},
       shoreShape: {value: Array.from({length: SHORE_SLOTS}, () => new THREE.Vector4(0, 0, 0, 0))},
       cove: {value: new THREE.Vector3(coveSpec.x, coveSpec.z, coveSpec.scale)},
@@ -33,7 +34,7 @@ export function createOceanMaterial() {
     fragmentShader: `
       uniform float time, warm, mist, night, rain;
       uniform vec2 wind;
-      uniform vec3 sunDir;
+      uniform vec3 sunDir, moonDir;
       uniform vec4 vessel, shores[6], shoreShape[6];
       uniform vec3 cove;
       varying vec3 vWorld;
@@ -50,7 +51,25 @@ export function createOceanMaterial() {
         vec3 horizon = mix(mix(vec3(.74,.85,.80), vec3(1.0,.68,.48), warm), vec3(.07,.10,.17), night);
         vec3 zenith = mix(mix(vec3(.31,.62,.72), vec3(.40,.43,.62), warm), vec3(.02,.03,.07), night);
         horizon = mix(horizon, vec3(.55,.6,.62)*(1.-night*.8), rain*.6);
-        return linearColor(mix(horizon, zenith, smoothstep(-.03,.75,direction.y)));
+        vec3 c = mix(horizon, zenith, smoothstep(-.03,.75,direction.y));
+        float toSun = max(0.0, dot(direction, sunDir));
+        c += mix(vec3(1.0,.9,.72), vec3(1.0,.55,.3), warm)*(pow(toSun,6.0)*.22+pow(toSun,48.0)*.45)*(1.0-night)*(1.0-rain*.75);
+        return linearColor(c);
+      }
+      // Rain: each ~0.9 m cell rings once per cycle, two offset layers so the drops never sync.
+      vec2 rainRipple(vec2 p, float t) {
+        vec2 slope = vec2(0.0);
+        for (int l=0; l<2; l++) {
+          vec2 q = p*1.1+float(l)*13.7;
+          vec2 cell = floor(q);
+          float h = hash(cell+float(l)*5.1);
+          float age = fract(t*1.3+h);
+          vec2 d = fract(q)-(.25+.5*vec2(hash(cell+1.3), hash(cell+7.9)));
+          float r = length(d)+1e-4, front = age*.42;
+          float envelope = exp(-pow((r-front)*11.0,2.0))*(1.0-age)*(1.0-age);
+          slope += d/r*sin((r-front)*32.0)*envelope;
+        }
+        return slope;
       }
       float shoreDistance(vec2 p) {
         float d = 1000.0;
@@ -90,8 +109,9 @@ export function createOceanMaterial() {
         vec2 along = vec2(-sin(wind.x),-cos(wind.x));
         vec2 across = vec2(-along.y,along.x);
         vec2 uv = vec2(dot(p,along),dot(p,across));
-        float warp = sin(uv.y*.19-time*.23)*1.7 + sin(uv.x*.11+time*.18);
+        float warp = (noise(p*.045+along*time*.02)-.5)*9.0 + (noise(uv*vec2(.06,.16)-time*.05)-.5)*3.5;
         float gust = .65+.7*noise(p*.085+along*time*.14);
+        float patchA = noise(p*.031-along*time*.03), patchB = noise(p*.067+across*time*.04+5.3);
         vec2 ripple = vec2(0.0);
         // Ripple octaves fan out by the golden angle around the wind so no two line up into
         // stripes; once an octave is finer than a pixel the rest are skipped.
@@ -102,10 +122,15 @@ export function createOceanMaterial() {
           if (filtered <= 0.0) break;
           float spin = octave*2.39996+.4*sin(octave*1.7);
           vec2 direction = normalize(along*cos(spin)*1.25+across*sin(spin));
-          float phase = dot(p,direction)*frequency - time*sqrt(9.8*frequency)*.55 + warp*(1.0-octave*.12) + octave*1.9;
-          float amplitude = .06*pow(.74,octave)*filtered*gust*(1.0+rain*.4);
+          // Bend each crest with noise at its own wavelength so it never runs straight for long.
+          float bend = noise(p*frequency*.32+octave*7.7+direction*time*.15)*4.2;
+          float phase = dot(p,direction)*frequency - time*sqrt(9.8*frequency)*.55 + warp*(1.0-octave*.12) + bend + octave*1.9;
+          float patchiness = .35+1.3*mix(patchA,patchB,fract(octave*.618));
+          float amplitude = .06*pow(.74,octave)*filtered*gust*patchiness*(1.0+rain*.4);
           ripple += amplitude*cos(phase)*direction;
         }
+        // Ring crests are ~18 cm apart: drawn only where a pixel is finer than that.
+        if (rain > .01 && footprint < .06) ripple += rainRipple(p,time)*.4*rain*(1.0-smoothstep(.02,.06,footprint));
         vec3 normal = normalize(vec3(-field.y-ripple.x*wind.y,1.0,-field.z-ripple.y*wind.y));
         vec3 halfDir = normalize(viewDir+sunDir);
         float nv = max(.025,dot(normal,viewDir));
@@ -138,14 +163,24 @@ export function createOceanMaterial() {
         float sunFresnel = .0204+.9796*pow(1.0-vh,5.0);
         float specular = distribution*masking*sunFresnel/(4.0*nv);
         color += mix(vec3(1.0,.89,.64),vec3(1.0,.48,.21),warm)*specular*.6*(1.0-night)*(1.0-rain*.7)*step(0.0,sunDir.y);
+        vec3 moonHalf = normalize(viewDir+moonDir);
+        float mh = max(0.0,dot(normal,moonHalf));
+        float moonA2 = pow(roughness*1.25,4.0), moonD = mh*mh*(moonA2-1.0)+1.0;
+        float moonGlint = moonA2/(PI*moonD*moonD)*sunFresnel/(4.0*nv);
+        color += vec3(.62,.72,.9)*min(moonGlint,40.0)*.05*night*(1.0-rain*.85)*step(0.0,moonDir.y);
 
         float foamNoise = noise(p*.8+vec2(time*.12,-time*.08));
         float beachWave = shore*.8+time*.78+noise(p*.13)*2.3;
         float beachFoam = smoothstep(.68,.98,cos(beachWave))*(1.0-smoothstep(1.0,13.0,shore));
         beachFoam *= smoothstep(.22,.66,foamNoise)*.58;
-        float crestFoam = smoothstep(.68-.25*smoothstep(1.0,1.5,wind.y),.94,field.x)*smoothstep(.70,.89,foamNoise)*(.15+.25*smoothstep(1.0,1.5,wind.y));
-        float foam = clamp(beachFoam+crestFoam,0.0,.8)*(1.0-night*.6);
-        color = mix(color,linearColor(vec3(.83,.90,.84)),foam);
+        vec2 streakUV = vec2(dot(p,along)*.28, dot(p,across)*1.15);
+        float streak = noise(streakUV+vec2(time*.35,0.0))*.6+noise(streakUV*2.7-vec2(time*.2,0.0))*.4;
+        float windy = smoothstep(1.0,1.5,wind.y);
+        float crestFoam = smoothstep(.62-.25*windy,.95,field.x+(streak-.5)*.35)*smoothstep(.48,.78,streak)*(.12+.3*windy);
+        crestFoam *= 1.0-.5*smoothstep(.4,3.0,footprint);
+        float foam = clamp(beachFoam+crestFoam,0.0,.8);
+        vec3 foamLight = linearColor(vec3(.86,.92,.89))*mix(1.0,.09,night)*(1.0-rain*.3);
+        color = mix(color,foamLight,foam);
         float haze = 1.0-exp(-pow(distanceToEye*mist*.85,2.0));
         color = mix(color,skyColor(vec3(0,0,1)),haze);
         gl_FragColor = vec4(color,1.0);

@@ -42,7 +42,9 @@ export default {
   },
 };
 
-const cleanName = value => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e]/g, '').trim().slice(0, 16) || '이름 없는 배';
+const stripName = value => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e]/g, '').trim();
+// Code points, so a cut never splits a surrogate pair. Empty stays empty: the client shows its own "unnamed boat".
+const cleanName = value => Array.from(stripName(value)).slice(0, 16).join('');
 const finite = n => typeof n === 'number' && Number.isFinite(n);
 
 export class SeaCell extends DurableObject {

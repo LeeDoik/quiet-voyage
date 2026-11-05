@@ -10,6 +10,7 @@ import { bakeTexture } from './materials.js';
 import { lifeNear, islandsNear } from './world-gen.js';
 import { surface } from './sea.js';
 import { sfx } from './audio.js';
+import { t } from './i18n.js';
 
 const TAU = Math.PI * 2;
 const RANGE = 1150;
@@ -214,13 +215,13 @@ function speciesMaterial(skin, roughness) {
 }
 
 const SPECIES = {
-  dolphin: { build: dolphinGeometry, cap: 140, name: '돌고래', sight: 260, rough: .35, k: 2.2 },
-  orca: { build: orcaGeometry, cap: 36, name: '범고래', sight: 420, rough: .3, k: .7 },
-  humpback: { build: humpbackGeometry, cap: 14, name: '혹등고래', sight: 900, rough: .5, k: .35 },
-  turtle: { build: turtleGeometry, cap: 24, name: '바다거북', sight: 110, rough: .7, k: 0 },
-  manta: { build: mantaGeometry, cap: 20, name: '쥐가오리', sight: 300, rough: .5, k: 0 },
-  flyingfish: { build: flyingFishGeometry, cap: 200, name: '날치', sight: 160, rough: .3, k: 9 },
-  gull: { build: gullGeometry, cap: 220, name: '바닷새', sight: 320, rough: .8, k: 0 },
+  dolphin: { build: dolphinGeometry, cap: 140, name: t('돌고래'), sight: 260, rough: .35, k: 2.2 },
+  orca: { build: orcaGeometry, cap: 36, name: t('범고래'), sight: 420, rough: .3, k: .7 },
+  humpback: { build: humpbackGeometry, cap: 14, name: t('혹등고래'), sight: 900, rough: .5, k: .35 },
+  turtle: { build: turtleGeometry, cap: 24, name: t('바다거북'), sight: 110, rough: .7, k: 0 },
+  manta: { build: mantaGeometry, cap: 20, name: t('쥐가오리'), sight: 300, rough: .5, k: 0 },
+  flyingfish: { build: flyingFishGeometry, cap: 200, name: t('날치'), sight: 160, rough: .3, k: 9 },
+  gull: { build: gullGeometry, cap: 220, name: t('바닷새'), sight: 320, rough: .8, k: 0 },
 };
 
 // ── spray: spouts and splashes ─────────────────────────────────────────────────────────────
@@ -449,7 +450,7 @@ export function createMarineLife(scene) {
           r = r ?? { amount: 0 };
           r.amount += ((near || (r.amount > .2 && boat.speed > 2)) ? 1 - r.amount : -r.amount) * (1 - Math.exp(-dt * (near ? .35 : .15)));
           r.boat = boat; ride.set(g.id, r);
-          if (r.amount > .6 && !r.told) { r.told = true; notices.push({ species: 'dolphin', name: '돌고래', text: '돌고래가 뱃머리 물결을 타고 있어요', distance: 0 }); }
+          if (r.amount > .6 && !r.told) { r.told = true; notices.push({ species: 'dolphin', name: t('돌고래'), text: t('돌고래가 뱃머리 물결을 타고 있어요'), distance: 0 }); }
         }
         const home = groupPath(g, T, 2), far = Math.hypot(home.x - boat.x, home.z - boat.z);
         if (g.species === 'humpback' && crossed(prevT, T, 23, h01(g.seed) * 23)) sfx.song(far);
@@ -462,9 +463,9 @@ export function createMarineLife(scene) {
           const water = surface(a.x, a.z, waveT);
           for (const [kind, ex, ez, strength] of events) {
             const ey = surface(ex, ez, waveT);
-            if (kind === 'blow') { spray.blow(ex, ey + .6, ez, strength, ex * 7 + ez); sfx.blow(distance, strength); if (distance < spec.sight) sight(g.id, g.species, distance, g.species === 'humpback' ? '멀리서 혹등고래가 숨을 내뿜었어요' : '범고래가 짧게 숨을 쉬었어요', ex, ey + 4, ez); }
-            else if (kind === 'breach') { spray.splash(ex, ey, ez, strength, ex + ez * 3); spray.blow(ex, ey, ez, 1.2, ez); if (distance < spec.sight && inView(ex, ey + 4, ez)) { sight(g.id, g.species, distance, '혹등고래가 물 위로 솟구쳤어요'); notices.push({ species: g.species, name: '혹등고래', text: '혹등고래가 물 위로 솟구쳤어요!', distance }); } }
-            else if (kind === 'fluke') { if (distance < spec.sight && inView(ex, ey + 3, ez)) notices.push({ species: g.species, name: '혹등고래', text: '꼬리지느러미를 들어 올리며 깊이 잠수해요', distance }); }
+            if (kind === 'blow') { spray.blow(ex, ey + .6, ez, strength, ex * 7 + ez); sfx.blow(distance, strength); if (distance < spec.sight) sight(g.id, g.species, distance, t(g.species === 'humpback' ? '멀리서 혹등고래가 숨을 내뿜었어요' : '범고래가 짧게 숨을 쉬었어요'), ex, ey + 4, ez); }
+            else if (kind === 'breach') { spray.splash(ex, ey, ez, strength, ex + ez * 3); spray.blow(ex, ey, ez, 1.2, ez); if (distance < spec.sight && inView(ex, ey + 4, ez)) { sight(g.id, g.species, distance, t('혹등고래가 물 위로 솟구쳤어요')); notices.push({ species: g.species, name: t('혹등고래'), text: t('혹등고래가 물 위로 솟구쳤어요!'), distance }); } }
+            else if (kind === 'fluke') { if (distance < spec.sight && inView(ex, ey + 3, ez)) notices.push({ species: g.species, name: t('혹등고래'), text: t('꼬리지느러미를 들어 올리며 깊이 잠수해요'), distance }); }
             else if (kind === 'puff') { if (distance < 120) spray.blow(ex, ey + .2, ez, strength, ex * 5 + ez); }
             else spray.splash(ex, ey, ez, strength, ex * 3 + ez);
           }
@@ -473,7 +474,7 @@ export function createMarineLife(scene) {
           if (distance > RANGE) continue;
           if (a.y + size * .6 > 0 && distance < spec.sight) {
             const texts = { dolphin: '돌고래 무리가 물살을 가르며 지나가요', orca: '범고래 무리의 높은 등지느러미가 보여요', humpback: '혹등고래의 등이 물 위로 드러났어요', turtle: '바다거북이 숨을 쉬러 올라왔어요', manta: '쥐가오리가 물 위로 뛰어올랐어요', flyingfish: '날치 떼가 수면 위를 날아가요' };
-            sight(g.id, g.species, distance, texts[g.species], a.x, water + a.y + size * .5, a.z);
+            sight(g.id, g.species, distance, t(texts[g.species]), a.x, water + a.y + size * .5, a.z);
           }
           place(g.species, a.x, water + a.y, a.z, a.yaw, a.pitch, a.roll, a.phase, a.amp, spec.k);
           visible++;
@@ -487,7 +488,7 @@ export function createMarineLife(scene) {
             const bx = c.x + Math.cos(a) * rad, bz = c.z + Math.sin(a) * rad;
             if (Math.hypot(bx - boat.x, bz - boat.z) > RANGE) continue;
             place('gull', bx, alt, bz, -a, 0, -.35, T * 7 + b, Math.sin(T * .9 + b) > .2 ? .55 : .05, 0);
-            if (Math.hypot(bx - boat.x, bz - boat.z) < SPECIES.gull.sight) sight(`birds:${g.id}`, 'gull', Math.hypot(bx - boat.x, bz - boat.z), '바닷새들이 맴돌고 있어요 — 아래에 무언가 있을지도', bx, alt, bz);
+            if (Math.hypot(bx - boat.x, bz - boat.z) < SPECIES.gull.sight) sight(`birds:${g.id}`, 'gull', Math.hypot(bx - boat.x, bz - boat.z), t('바닷새들이 맴돌고 있어요 — 아래에 무언가 있을지도'), bx, alt, bz);
           }
         }
       }

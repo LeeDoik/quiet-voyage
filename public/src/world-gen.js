@@ -1,6 +1,8 @@
 // The open sea past the home waters, generated chunk by chunk from one fixed world seed. Every
 // player computes the same islands and the same marine-life groups for the same coordinates, so
 // nothing about the map is sent over the network. Pure functions only: no scene, no clock.
+import { lang, t } from './i18n.js';
+
 // mulberry32, kept local so node tests can import this module without three.js.
 function makeRng(seed) {
   let a = Number(seed) >>> 0 || 1;
@@ -20,13 +22,20 @@ export const HOME_RADIUS = 950;         // the hand-built home waters stay as au
 
 // The home islands keep their exact collision ellipses (tests and demos depend on them).
 export const HOME_ISLANDS = [
-  { id: 'home-0', x: -105, z: -240, rx: 50.4, rz: 31.36, rot: 0, a2: 0, a3: 0, a5: 0, height: 25, kind: 'green', seed: 11, name: '첫 바람섬', home: true, trees: 13 },
-  { id: 'home-1', x: -310, z: -500, rx: 100.8, rz: 50.4, rot: 0, a2: 0, a3: 0, a5: 0, height: 30, kind: 'green', seed: 23, name: '긴 등섬', home: true, trees: 18 },
-  { id: 'home-2', x: 340, z: -650, rx: 117.6, rz: 52.64, rot: 0, a2: 0, a3: 0, a5: 0, height: 40, kind: 'green', seed: 37, name: '높은 숲섬', home: true, trees: 22 },
+  { id: 'home-0', x: -105, z: -240, rx: 50.4, rz: 31.36, rot: 0, a2: 0, a3: 0, a5: 0, height: 25, kind: 'green', seed: 11, name: t('첫 바람섬'), home: true, trees: 13 },
+  { id: 'home-1', x: -310, z: -500, rx: 100.8, rz: 50.4, rot: 0, a2: 0, a3: 0, a5: 0, height: 30, kind: 'green', seed: 23, name: t('긴 등섬'), home: true, trees: 18 },
+  { id: 'home-2', x: 340, z: -650, rx: 117.6, rz: 52.64, rot: 0, a2: 0, a3: 0, a5: 0, height: 40, kind: 'green', seed: 37, name: t('높은 숲섬'), home: true, trees: 22 },
 ];
 
-const PREFIX = ['바람', '물새', '노을', '고요', '은빛', '푸른', '작은', '먼', '소금', '달빛', '산호', '갈매기', '안개', '조개', '해무', '파도', '별빛', '동백', '솔', '흰모래', '검은', '구름', '등대', '고래', '거북', '빛', '새벽', '여울'];
-const SUFFIX = { green: ['섬', '숲섬', '언덕섬'], rock: ['바위', '여', '바위섬'], volcano: ['봉우리섬', '불섬', '산섬'], atoll: ['모래섬', '산호섬', '고리섬'], sandbar: ['모래톱', '모래등', '여울'] };
+// [Korean, English] pairs: the same seeded pick names one island in both languages.
+const PREFIX = [['바람', 'Windward'], ['물새', 'Tern'], ['노을', 'Sunset'], ['고요', 'Still'], ['은빛', 'Silver'], ['푸른', 'Blue'], ['작은', 'Little'], ['먼', 'Far'], ['소금', 'Salt'], ['달빛', 'Moonlit'], ['산호', 'Coral'], ['갈매기', 'Gull'], ['안개', 'Misty'], ['조개', 'Shell'], ['해무', 'Haze'], ['파도', 'Surf'], ['별빛', 'Starlit'], ['동백', 'Camellia'], ['솔', 'Pine'], ['흰모래', 'Whitesand'], ['검은', 'Black'], ['구름', 'Cloud'], ['등대', 'Beacon'], ['고래', 'Whale'], ['거북', 'Turtle'], ['빛', 'Bright'], ['새벽', 'Dawn'], ['여울', 'Eddy']];
+const SUFFIX = {
+  green: [['섬', 'Isle'], ['숲섬', 'Grove'], ['언덕섬', 'Hill']],
+  rock: [['바위', 'Rock'], ['여', 'Reef'], ['바위섬', 'Crag']],
+  volcano: [['봉우리섬', 'Peak'], ['불섬', 'Fire Isle'], ['산섬', 'Mount']],
+  atoll: [['모래섬', 'Cay'], ['산호섬', 'Atoll'], ['고리섬', 'Ring']],
+  sandbar: [['모래톱', 'Sandbar'], ['모래등', 'Bank'], ['여울', 'Shoal']],
+};
 
 function hash2(x, z, salt = 0) {
   let h = (Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(z | 0, 0x165667b1) ^ Math.imul(salt | 0, 0x9e3779b1) ^ WORLD_SEED) >>> 0;
@@ -80,7 +89,8 @@ function makeIsland(rng, cx, cz, index) {
     a2: range(rng, 0, .11) * wobble, a3: range(rng, 0, .09) * wobble, a5: range(rng, 0, .05) * wobble,
     height: range(rng, h0, h1), seed: Math.floor(rng() * 1e9),
   };
-  s.name = `${pick(rng, PREFIX)}${pick(rng, SUFFIX[kind])}`;
+  const [p, q] = [pick(rng, PREFIX), pick(rng, SUFFIX[kind])];
+  s.name = lang === 'ko' ? p[0] + q[0] : `${p[1]} ${q[1]}`;
   s.trees = kind === 'green' ? Math.round(rx * .22) : kind === 'volcano' ? Math.round(rx * .16) : kind === 'atoll' ? Math.round(rx * .12) : kind === 'rock' ? Math.round(rng() * 3) : 0;
   s.landmark = (kind === 'green' || kind === 'rock') && rng() < .14 ? 'lighthouse' : null;
   s.birds = kind === 'rock' || kind === 'sandbar' || rng() < .3;

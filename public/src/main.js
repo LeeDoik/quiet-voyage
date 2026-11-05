@@ -13,6 +13,8 @@ import { createTouch } from './touch.js';
 import { createLogbook } from './logbook.js';
 import { createBottles, PHRASES } from './bottles.js';
 import { clearance } from './sea.js';
+import { lang, t } from './i18n.js';
+document.documentElement.lang=lang; document.title=t('함께 항해');
 
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
 const scene=new THREE.Scene(); const camera=new THREE.PerspectiveCamera(50,1,.1,2000);
@@ -52,7 +54,7 @@ function photoCamera(dt,keys){
   const a=b.yaw+photo.yaw;camera.position.set(b.x+Math.sin(a)*photo.dist,photo.height+photo.dist*.12,b.z+Math.cos(a)*photo.dist);camera.lookAt(b.x,2.5,b.z);
 }
 function savePhoto(){
-  renderer.domElement.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`함께-흐르는-바다-${Date.now()}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);});
+  renderer.domElement.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${t('함께-흐르는-바다')}-${Date.now()}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);});
   photo.saved=2;
 }
 // On the public web build each sailor starts somewhere different in the wide sea around home,
@@ -130,10 +132,10 @@ installStudio({canvas:renderer.domElement,scene,renderer,camera,eyeUsesRenderCam
     if(demoMode)continue;
     if(event.kind==='island')logbook.island(event.spec);
     else if(event.kind==='creature')logbook.creature(event);
-    else if(event.kind==='moment')logbook.moment(event.title,event.description);
-    else if(event.kind==='notice')logbook.say(event.text);
+    else if(event.kind==='moment')logbook.moment(t(event.title),t(event.description));
+    else if(event.kind==='notice')logbook.say(t(event.text));
   }
-  for(const event of bottles.drain()){if(event.kind==='bottle'){logbook.moment(event.title,event.text);logbook.say(`${event.title} — ${event.text}`,7);}else logbook.say(event.text);}
+  for(const event of bottles.drain()){if(event.kind==='bottle'){logbook.moment(event.title,event.text);logbook.say(`${event.title}\n${event.text}`,7);}else logbook.say(event.text);}
   if(!demoMode){ui.update(dt,input,snapshot());ui.hud(snapshot());}
 },render(){if(!performanceTest.active()){renderScene();if(photo.shot){photo.shot=false;savePhoto();}}},probes:snapshot});
 reset();

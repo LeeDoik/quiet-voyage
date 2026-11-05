@@ -2,6 +2,7 @@
 // events a keyboard sends, so the game keeps one input path (ctx.keys in update()). The
 // buttons are drawn by interface.js from state(); nothing here touches the DOM beyond styles.
 import { platform } from './platform.js';
+import { t } from './i18n.js';
 
 const HOLD_MIN = 90; // ms a tap holds its key, so a quick tap still spans a simulation frame
 
@@ -42,7 +43,7 @@ export function createTouch(canvas) {
   function layout() {
     const w = innerWidth, h = innerHeight, m = Math.min(w, h);
     const R = Math.max(30, m * .085), r = Math.max(22, m * .052), pad = m * .045;
-    const at = (id, label, caption, code, x, y, radius) => ({ id, label, caption, code, x, y, radius });
+    const at = (id, label, caption, code, x, y, radius) => ({ id, label: t(label), caption: t(caption), code, x, y, radius });
     const list = [
       at('left', '◀', mode === 'photo' ? '돌기' : '왼쪽', 'KeyA', pad + R, h - pad - R, R),
       at('right', '▶', mode === 'photo' ? '돌기' : '오른쪽', 'KeyD', pad + R * 3.35, h - pad - R, R),
@@ -53,7 +54,7 @@ export function createTouch(canvas) {
       : [['journal', '노트', 'KeyJ'], ['guide', '도감', 'KeyK'], ['pulse', '빛', 'KeyE'], ['trace', '흔적', 'KeyR'], ['bottle', '편지', 'KeyB'], ['photo', '사진', 'KeyC'], ...(practice ? [['practice', '동행', 'KeyH']] : [])];
     row.forEach(([id, label, code], i) => list.push(at(id, label, '', code, w - pad - r - i * r * 2.4, pad + r, r)));
     // Bottle phrases: wide rows (rectangles) down the middle of the screen.
-    if (mode === 'picker') phrases.forEach((text, i) => list.push({ id: `phrase-${i}`, label: `${i + 1}  ${text}`, caption: '', code: `Digit${i + 1}`, x: w / 2, y: h * .2 + i * Math.max(40, h * .075), radius: 0, w: Math.min(w * .86, 520), h: Math.max(34, h * .062) }));
+    if (mode === 'picker') phrases.forEach((text, i) => list.push({ id: `phrase-${i}`, label: `${i + 1}  ${t(text)}`, caption: '', code: `Digit${i + 1}`, x: w / 2, y: h * .2 + i * Math.max(40, h * .075), radius: 0, w: Math.min(w * .86, 520), h: Math.max(34, h * .062) }));
     buttons = list;
   }
   const hit = (x, y) => buttons.find(b => b.w ? Math.abs(x - b.x) < b.w / 2 && Math.abs(y - b.y) < b.h / 2 : Math.hypot(x - b.x, y - b.y) < b.radius * 1.15);

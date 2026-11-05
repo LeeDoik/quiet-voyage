@@ -17,15 +17,18 @@ export function createWorld(scene, { realDay = null } = {}) {
   scene.fog = new THREE.FogExp2(0xb9d9d7, 0.00115);
   const hemi = new THREE.HemisphereLight(0xeaf6ed, 0x416e73, 2.0); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe3b9, 2.1); sun.position.set(-100, 120, -200); scene.add(sun, sun.target);
-  const skyMat = new THREE.ShaderMaterial({side:THREE.BackSide, depthWrite:false, uniforms:{warm:{value:0}, night:env.night, rain:env.rain, spin:{value:0}},
+  const skyMat = new THREE.ShaderMaterial({side:THREE.BackSide, depthWrite:false, uniforms:{warm:{value:0}, night:env.night, rain:env.rain, spin:{value:0}, sunDir:{value:new THREE.Vector3(0,1,0)}},
     vertexShader:`varying vec3 vDir; void main(){vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-    fragmentShader:`varying vec3 vDir; uniform float warm, night, rain, spin;
+    fragmentShader:`varying vec3 vDir; uniform float warm, night, rain, spin; uniform vec3 sunDir;
       float h(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
       void main(){vec3 d=normalize(vDir); float y=d.y;
         vec3 horizon=mix(mix(vec3(.74,.85,.80),vec3(1.,.68,.48),warm),vec3(.07,.10,.17),night);
         vec3 top=mix(mix(vec3(.31,.62,.72),vec3(.40,.43,.62),warm),vec3(.02,.03,.07),night);
         vec3 c=mix(horizon,top,smoothstep(-.03,.75,y));
         c=mix(c,vec3(.55,.6,.62)*(1.-night*.8),rain*.6);
+        // The same sun glow the ocean reflects (ocean-material.js skyColor).
+        float toSun=max(0.,dot(d,sunDir));
+        c+=mix(vec3(1.,.9,.72),vec3(1.,.55,.3),warm)*(pow(toSun,6.)*.22+pow(toSun,48.)*.45)*(1.-night)*(1.-rain*.75);
         // Stars: a hashed cell per direction, turning slowly with the night.
         float a=spin; vec3 q=vec3(d.x*cos(a)-d.z*sin(a),d.y,d.x*sin(a)+d.z*cos(a))*180.;
         vec3 cell=floor(q); float star=step(.9965,h(cell))*smoothstep(.45,.0,length(fract(q)-.5));
@@ -53,7 +56,9 @@ export function createWorld(scene, { realDay = null } = {}) {
     // Red outside, violet inside, faint everywhere — over a pale sky it must tint, not add.
     fragmentShader:`varying float vR; uniform float alpha; void main(){ float t=1.-vR; vec3 c=clamp(abs(mod(t*5.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.); gl_FragColor=vec4(c,alpha*.24*sin(clamp(vR,0.,1.)*3.14159)); }`});
   const rainbow=new THREE.Mesh(new THREE.RingGeometry(330,370,96,1,0,Math.PI),bowMat);rainbow.userData.tag='rainbow';rainbow.visible=false;scene.add(rainbow);
+  const moonDisc=new THREE.Mesh(new THREE.CircleGeometry(11,32),new THREE.MeshBasicMaterial({color:0xe8eefc,transparent:true,opacity:0,depthWrite:false,fog:false}));moonDisc.userData.tag='moon';scene.add(moonDisc);
   const waterMat = createOceanMaterial();
+  skyMat.uniforms.sunDir=waterMat.uniforms.sunDir;
   const water=createWaterLOD(scene,waterMat);
   const hillGeo=new THREE.IcosahedronGeometry(1,2);
   function tree(group,x,z,scale,y=6){const t=makeTree({height:7*scale,spread:3*scale,seed:Math.round((x+100)*3+(z+100)*7),kind:'needle'});t.position.set(x,y,z);group.add(t);}
@@ -122,6 +127,9 @@ export function createWorld(scene, { realDay = null } = {}) {
     const sunY=40+260*elevation, sx=boat.x-210, sz=boat.z-650;
     skyMat.uniforms.warm.value=warm;skyMat.uniforms.spin.value=clock*.004;waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessel.value.set(boat.x,boat.z,boat.yaw,boat.speed);
     waterMat.uniforms.sunDir.value.set(-210,sunY,-650).normalize();
+    // The moon rides opposite the sun's height, a little to the east of it.
+    const moonY=40-260*elevation;waterMat.uniforms.moonDir.value.set(230,moonY,-620).normalize();
+    moonDisc.position.set(boat.x+230,moonY,boat.z-620);moonDisc.lookAt(boat.x,8,boat.z);moonDisc.material.opacity=.95*night*(1-w.rain*.9);moonDisc.visible=night>.01;
     sky.position.set(boat.x,0,boat.z);sunDisc.position.set(sx,sunY,sz);sunDisc.lookAt(boat.x,8,boat.z);sunDisc.material.opacity=.85*(1-w.rain*.8);
     const light=1-night*.82;
     hemi.intensity=(1.9-warm*.35)*light*(1-w.rain*.25);sun.intensity=(2.1-warm*.45)*(1-night)*(1-w.rain*.6);sun.position.set(sx,Math.max(10,sunY),sz);sun.target.position.set(boat.x,0,boat.z);sun.target.updateMatrixWorld();sun.color.setRGB(1,1-warm*.22,1-warm*.4);
