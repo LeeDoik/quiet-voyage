@@ -1,0 +1,18 @@
+name = "quiet-voyage"
+main = "server/worker.js"
+compatibility_date = "2025-09-01"
+
+# The game is plain static files in public/: requests for a file are served directly,
+# everything else (/ws, /health) reaches the Worker.
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "CELL"
+class_name = "SeaCell"
+
+# SQLite-backed Durable Objects work on the Workers free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SeaCell"]

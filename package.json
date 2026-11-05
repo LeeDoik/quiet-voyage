@@ -1,0 +1,13 @@
+{
+  "name": "quiet-voyage",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
