@@ -40,7 +40,7 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 | `public/src/islands.js`, `marine-life.js`, `bottles.js` | 스트리밍 섬, 해양 생물, 병 편지 |
 | `public/src/sailing.js`, `sea.js` | 배, 바람, 파도, 항적, 충돌 |
 | `public/src/boat-float.js`, `wake.js`, `wind-rig.js` | 물에 뜨는 방식(스프링 부력, 바람에 기울기), 항적 리본, 바람에 부푸는 돛. 내 배와 다른 배가 함께 쓴다 |
-| `public/src/ocean-material.js`, `wave-field.js` | 바다 셰이더(너울, 잔물결, 반사, 선체 주변 거품·물결), CPU와 같은 너울 식 |
+| `public/src/ocean-material.js`, `wave-field.js` | 바다 셰이더(너울, 잔물결, 반사, 선체 주변 물결), CPU와 같은 너울 식 |
 | `public/src/audio.js` | 합성한 소리 전부(마스터·리미터, 바다·배·생물·행동 소리, M으로 끄기) |
 | `public/src/dolphin-ride.js` | 돌고래가 뱃머리 물결을 타고 놓아주는 규칙 |
 | `public/src/interface.js`, `touch.js`, `logbook.js` | HUD, 터치 조작, 항해 기록 |

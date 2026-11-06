@@ -20,20 +20,15 @@ const material = new THREE.ShaderMaterial({
       float across=vWake.x, age=vWake.y, strength=vWake.z;
       // Zero at the ribbon's own edges, so no seam or straight border ever shows on the water.
       float edges=1.-smoothstep(.5,1.,abs(across));
-      float lace=n(vWorld*2.1+vec2(time*.19,-time*.13))*.65+n(vWorld*5.3-time*.3)*.35;
-      float foam;
-      if(vWake.w<.5){
-        // Kelvin arm: thin feathered crests slanting back from the track, breaking up as they age.
-        float crest=pow(.5+.5*sin(vAlong*2.3+across*2.8-time*1.1),5.);
-        float body=exp(-pow((across+.2)*1.9,2.));
-        foam=body*(.3+.7*crest)*smoothstep(.42+.3*age,.86,lace+.14*(1.-age))*.6;
-      }else{
-        // Churned centre: a lane of white close astern that falls apart into patches.
-        foam=exp(-across*across*1.8)*smoothstep(.4+.35*age,.86,lace+.2*(1.-age))*.42;
-      }
-      float a=foam*edges*strength*pow(1.-age,1.6);
-      vec3 day=vec3(.88,.94,.92), glow=vec3(.25,.85,1.);
-      gl_FragColor=vec4(mix(day,glow,night), a*mix(1.,.5+1.8*lace*lace,night));   // at night: sparkling, not a sheet
+      float lace=n(vWorld*3.1+vec2(time*.19,-time*.13))*.45+n(vWorld*7.9-time*.3)*.35+n(vWorld*19.+time*.21)*.2;
+      // Kelvin arm: feathered crests slanting back from the track. Centre: the churned lane astern.
+      float shape=vWake.w<.5?exp(-pow((across+.2)*1.9,2.))*(.35+.65*pow(.5+.5*sin(vAlong*2.3+across*2.8-time*1.1),5.)):exp(-across*across*1.8);
+      // Thin white over the sea reads as a grey stain, so less foam means fewer patches, not fainter ones,
+      // and around them the churned water is only paler and greener (bubbles under the surface).
+      float amount=shape*edges*strength*(1.-age), cut=1.-.6*amount, w=max(fwidth(lace),.05);
+      float foam=smoothstep(cut-w,cut+w,lace)*min(1.,amount*4.), bubbles=amount*(.55+.45*lace)*.45*(1.-night*.8);
+      vec3 day=mix(vec3(.42,.74,.72),vec3(.93,.96,.95),foam), glow=vec3(.25,.85,1.);
+      gl_FragColor=vec4(mix(day,glow,night), max(foam*.9*mix(1.,.5+1.8*lace*lace,night), bubbles));   // at night: sparkling, not a sheet
     }`,
 });
 

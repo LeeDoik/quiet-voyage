@@ -86,9 +86,10 @@ export function createOceanMaterial() {
         float arm = exp(-pow((abs(q.x)-(.95+.36*max(0.0, 2.45-q.y)))/.33, 2.0))*smoothstep(-2.8, 1.2, q.y)*smoothstep(3.1, 2.1, q.y);
         return sp*sp*(.1*cushion+.08*arm);
       }
-      // x: foam, y: shade (the hull, not the sky, is what the water beside it reflects), zw: slope.
-      vec4 hullWater(vec2 p, float time) {
-        vec4 acc = vec4(0.0, 1.0, 0.0, 0.0);
+      // x: shade (the hull, not the sky, is what the water beside it reflects), yz: slope.
+      // No foam here: half-transparent foam over the dark water read as a grey stain round the hull.
+      vec3 hullWater(vec2 p) {
+        vec3 acc = vec3(1.0, 0.0, 0.0);
         for (int i=0; i<4; i++) {
           vec4 v = vessels[i];
           vec2 d = p-v.xy;
@@ -99,13 +100,8 @@ export function createOceanMaterial() {
           if (dist < -.08) continue;                       // under the hull itself
           float wave = hullWave(q, sp);
           vec2 grad = vec2(hullWave(q+vec2(.05,0.0), sp)-wave, hullWave(q+vec2(0.0,.05), sp)-wave)/.05;
-          acc.zw += right*grad.x+ahead*grad.y;
-          // Foam hugs the waterline, streams aft with speed and laps a little even at rest.
-          float lace = noise(q*vec2(2.6,1.1)+vec2(0.0, time*(.4+v.w*.45)))*.6+noise(q*vec2(6.0,3.0)-time*.7)*.4;
-          float band = smoothstep(-.08, .06, dist)*exp(-max(dist, 0.0)*(3.2-1.6*sp));
-          acc.x = max(acc.x, band*smoothstep(.35-.2*sp, .8, lace)*(.25+.55*sp));
-          acc.x = max(acc.x, smoothstep(.07, .16, wave)*smoothstep(.4, .8, lace)*.7);
-          acc.y = min(acc.y, 1.0-.5*exp(-max(dist, 0.0)*2.2));
+          acc.yz += right*grad.x+ahead*grad.y;
+          acc.x = min(acc.x, 1.0-.5*exp(-max(dist, 0.0)*2.2));
         }
         return acc;
       }
@@ -169,8 +165,8 @@ export function createOceanMaterial() {
         }
         // Ring crests are ~18 cm apart: drawn only where a pixel is finer than that.
         if (rain > .01 && footprint < .06) ripple += rainRipple(p,time)*.4*rain*(1.0-smoothstep(.02,.06,footprint));
-        vec4 hull = hullWater(p, time);
-        vec3 normal = normalize(vec3(-field.y-hull.z-ripple.x*wind.y,1.0,-field.z-hull.w-ripple.y*wind.y));
+        vec3 hull = hullWater(p);
+        vec3 normal = normalize(vec3(-field.y-hull.y-ripple.x*wind.y,1.0,-field.z-hull.z-ripple.y*wind.y));
         vec3 halfDir = normalize(viewDir+sunDir);
         float nv = max(.025,dot(normal,viewDir));
         float nl = max(.001,dot(normal,sunDir));
@@ -189,9 +185,8 @@ export function createOceanMaterial() {
         water *= .88+.12*clamp(field.x+.5,0.0,1.0);
         // Light through the thin top of a swell: a green-blue glow on crests seen against the sun.
         water += vec3(.0,.05,.045)*smoothstep(.1,.6,field.x)*pow(max(0.0,dot(viewDir,-sunDir)*.5+.5),2.0)*(1.0-night);
-        water *= mix(1.0, hull.y, .6);
         water *= 1.0-night*.7;
-        vec3 color = mix(water,skyColor(reflection)*hull.y,fresnel);
+        vec3 color = mix(water,skyColor(reflection)*hull.x,fresnel);
 
         // Dielectric microfacet sun glints, widened when the footprint grows.
         float roughness = .22+.11*smoothstep(.2,4.0,footprint);
@@ -218,7 +213,7 @@ export function createOceanMaterial() {
         float windy = smoothstep(1.0,1.5,wind.y);
         float crestFoam = smoothstep(.62-.25*windy,.95,field.x+(streak-.5)*.35)*smoothstep(.48,.78,streak)*(.12+.3*windy);
         crestFoam *= 1.0-.5*smoothstep(.4,3.0,footprint);
-        float foam = clamp(beachFoam+crestFoam+hull.x,0.0,.85);
+        float foam = clamp(beachFoam+crestFoam,0.0,.85);
         vec3 foamLight = linearColor(vec3(.86,.92,.89))*mix(1.0,.09,night)*(1.0-rain*.3);
         color = mix(color,foamLight,foam);
         float haze = 1.0-exp(-pow(distanceToEye*mist*.85,2.0));
