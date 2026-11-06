@@ -11,6 +11,7 @@ import { lifeNear, islandsNear } from './world-gen.js';
 import { surface } from './sea.js';
 import { sfx } from './audio.js';
 import { t } from './i18n.js';
+import { rideStep } from './dolphin-ride.js';
 
 const TAU = Math.PI * 2;
 const RANGE = 1150;
@@ -317,9 +318,12 @@ function animate(g, i, T, prevT, out, events, ride) {
     const leap = h01(g.seed, i, cycle) > .82 ? 1 : 0, rise = 1.5 + 1.25 * leap;
     let y = -2.2, pitch = 0;
     if (u < .46) { const k = u / .46; y = -1.05 + rise * Math.sin(Math.PI * k); pitch = Math.atan2(rise * Math.PI / (.46 * P) * Math.cos(Math.PI * k), speed) * .8; }
-    if (leap && crossed(prevT + seed * P, T + seed * P, P, .44 * P)) events.push(['splash', x, z, .7]);
-    if (crossed(prevT + seed * P, T + seed * P, P, .03 * P)) events.push(['puff', x, z, .12]);
-    return pose(out, x, y, z, yaw, pitch, 0, T * 9 + seed * 6, .07);
+    const dive = ride.dive ?? 0;
+    if (dive < .2) {
+      if (leap && crossed(prevT + seed * P, T + seed * P, P, .44 * P)) events.push(['splash', x, z, .7]);
+      if (crossed(prevT + seed * P, T + seed * P, P, .03 * P)) events.push(['puff', x, z, .12]);
+    }
+    return pose(out, x, y - dive * 7, z, yaw, pitch - dive * .35, 0, T * 9 + seed * 6, .07);
   }
   if (species === 'orca') {
     const path = groupPath(g, T, 3.4);
@@ -443,27 +447,27 @@ export function createMarineLife(scene) {
       visible = 0;
       for (const g of groups) {
         const spec = SPECIES[g.species];
-        // Dolphins come over to ride a moving bow wave, then drift back to their own way.
+        // Dolphins come over to ride a moving bow wave, then dive and go back to their own way.
         let r = ride.get(g.id);
         if (g.species === 'dolphin') {
-          const c = groupPath(g, T, 4.2), near = Math.hypot(c.x - boat.x, c.z - boat.z) < 110 && boat.speed > 2.4;
-          r = r ?? { amount: 0 };
-          r.amount += ((near || (r.amount > .2 && boat.speed > 2)) ? 1 - r.amount : -r.amount) * (1 - Math.exp(-dt * (near ? .35 : .15)));
+          const c = groupPath(g, T, 4.2);
+          r = rideStep(r, dt, Math.hypot(c.x - boat.x, c.z - boat.z), boat.speed);
           r.boat = boat; ride.set(g.id, r);
           if (r.amount > .6 && !r.told) { r.told = true; notices.push({ species: 'dolphin', name: t('돌고래'), text: t('돌고래가 뱃머리 물결을 타고 있어요'), distance: 0 }); }
         }
-        const home = groupPath(g, T, 2), far = Math.hypot(home.x - boat.x, home.z - boat.z);
-        if (g.species === 'humpback' && crossed(prevT, T, 23, h01(g.seed) * 23)) sfx.song(far);
-        if (r?.amount > .5 && crossed(prevT, T, 2.9, h01(g.seed, 3) * 2.9)) sfx.whistle();
+        if (g.species === 'humpback' && crossed(prevT, T, 23, h01(g.seed) * 23)) { const home = groupPath(g, T, 2); sfx.song(home.x, home.z); }
+        // Riding dolphins whistle now and then; one of them calls, from where it swims.
+        const caller = r?.amount > .5 && crossed(prevT, T, 2.9, h01(g.seed, 3) * 2.9) ? Math.floor(T) % g.count : -1;
         for (let i = 0; i < g.count; i++) {
           events.length = 0;
           const a = animate(g, i, T, prevT, out, events, r ?? { amount: 0 });
           if (!a) continue;
+          if (i === caller) sfx.whistle(a.x, a.z);
           const distance = Math.hypot(a.x - boat.x, a.z - boat.z);
           const water = surface(a.x, a.z, waveT);
           for (const [kind, ex, ez, strength] of events) {
             const ey = surface(ex, ez, waveT);
-            if (kind === 'blow') { spray.blow(ex, ey + .6, ez, strength, ex * 7 + ez); sfx.blow(distance, strength); if (distance < spec.sight) sight(g.id, g.species, distance, t(g.species === 'humpback' ? '멀리서 혹등고래가 숨을 내뿜었어요' : '범고래가 짧게 숨을 쉬었어요'), ex, ey + 4, ez); }
+            if (kind === 'blow') { spray.blow(ex, ey + .6, ez, strength, ex * 7 + ez); sfx.blow(ex, ez, strength); if (distance < spec.sight) sight(g.id, g.species, distance, t(g.species === 'humpback' ? '멀리서 혹등고래가 숨을 내뿜었어요' : '범고래가 짧게 숨을 쉬었어요'), ex, ey + 4, ez); }
             else if (kind === 'breach') { spray.splash(ex, ey, ez, strength, ex + ez * 3); spray.blow(ex, ey, ez, 1.2, ez); if (distance < spec.sight && inView(ex, ey + 4, ez)) { sight(g.id, g.species, distance, t('혹등고래가 물 위로 솟구쳤어요')); notices.push({ species: g.species, name: t('혹등고래'), text: t('혹등고래가 물 위로 솟구쳤어요!'), distance }); } }
             else if (kind === 'fluke') { if (distance < spec.sight && inView(ex, ey + 3, ez)) notices.push({ species: g.species, name: t('혹등고래'), text: t('꼬리지느러미를 들어 올리며 깊이 잠수해요'), distance }); }
             else if (kind === 'puff') { if (distance < 120) spray.blow(ex, ey + .2, ez, strength, ex * 5 + ez); }
@@ -482,7 +486,7 @@ export function createMarineLife(scene) {
         // Seabirds wheel over busy water: dolphin pods and flying-fish shoals.
         if ((g.species === 'dolphin' || g.species === 'flyingfish') && h01(g.seed, 9) > .45) {
           const c = groupPath(g, T, g.species === 'dolphin' ? 4.2 : 2);
-          if (crossed(prevT, T, 5.5, h01(g.seed, 4) * 5.5)) sfx.gull(Math.hypot(c.x - boat.x, c.z - boat.z));
+          if (crossed(prevT, T, 5.5, h01(g.seed, 4) * 5.5)) sfx.gull(c.x, c.z);
           for (let b = 0; b < 6; b++) {
             const a = T * (.35 + .1 * h01(g.seed, b)) + b * 1.05, rad = 12 + 10 * h01(g.seed, b, 2), alt = 9 + 7 * h01(g.seed, b, 3) + Math.sin(T * .6 + b) * 2;
             const bx = c.x + Math.cos(a) * rad, bz = c.z + Math.sin(a) * rad;
@@ -495,11 +499,11 @@ export function createMarineLife(scene) {
       // Seabirds also nest on rocky islets and sandbars.
       for (const s of islandsNear(boat.x, boat.z, 900, islands)) {
         if (!s.birds) continue;
-        if (crossed(prevT, T, 7, s.seed % 7)) sfx.gull(Math.hypot(s.x - boat.x, s.z - boat.z) - Math.max(s.rx, s.rz));
-        const n = 5 + Math.floor(h01(s.seed % 1000, 1) * 6);
+        const call = crossed(prevT, T, 7, s.seed % 7), n = 5 + Math.floor(h01(s.seed % 1000, 1) * 6);
         for (let b = 0; b < n; b++) {
           const a = T * (.25 + .12 * h01(s.seed % 1000, b)) * (b % 2 ? 1 : -1) + b * 1.3, rad = Math.max(s.rx, s.rz) * (.4 + .5 * h01(s.seed % 997, b)), alt = s.height + 6 + 10 * h01(s.seed % 991, b);
           const bx = s.x + Math.cos(a) * rad, bz = s.z + Math.sin(a) * rad;
+          if (call && b === 0) sfx.gull(bx, bz);   // the cry comes from a bird you can see
           place('gull', bx, alt, bz, b % 2 ? -a : -a + Math.PI, 0, b % 2 ? -.3 : .3, T * 6 + b, Math.sin(T * .7 + b * 2) > 0 ? .5 : .05, 0);
         }
       }

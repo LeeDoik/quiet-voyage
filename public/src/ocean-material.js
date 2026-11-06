@@ -3,6 +3,8 @@ import { coveSpec, env } from './sea.js';
 
 // The nearest islands' coast shapes (world-gen.js), refreshed by world.js as the boat moves.
 export const SHORE_SLOTS = 6;
+/** Hulls the water reacts to: the player's boat first, then the nearest others. w = speed, -1 = empty. */
+export const VESSEL_SLOTS = 4;
 import { waveGLSL } from './wave-field.js';
 
 export function createOceanMaterial() {
@@ -11,7 +13,7 @@ export function createOceanMaterial() {
     uniforms: {
       time: {value: 0}, warm: {value: 0},
       wind: {value: new THREE.Vector2(.65, 1)},
-      vessel: {value: new THREE.Vector4(0, 0, 0, 0)},
+      vessels: {value: Array.from({length: VESSEL_SLOTS}, () => new THREE.Vector4(0, 0, 0, -1))},
       mist: {value: .00115},
       night: env.night, rain: env.rain,
       sunDir: {value: new THREE.Vector3(-210, 95, -650).normalize()},
@@ -35,7 +37,7 @@ export function createOceanMaterial() {
       uniform float time, warm, mist, night, rain;
       uniform vec2 wind;
       uniform vec3 sunDir, moonDir;
-      uniform vec4 vessel, shores[6], shoreShape[6];
+      uniform vec4 vessels[4], shores[6], shoreShape[6];
       uniform vec3 cove;
       varying vec3 vWorld;
       const float PI = 3.14159265;
@@ -70,6 +72,42 @@ export function createOceanMaterial() {
           slope += d/r*sin((r-front)*32.0)*envelope;
         }
         return slope;
+      }
+      // A hull in the boat's frame (x to starboard, y to the bow): distance to its waterline.
+      float hullDistance(vec2 q) {
+        float len = q.y > 0.0 ? 2.55 : 2.15, t = clamp(q.y/len, -1.0, 1.0);
+        float beam = .88*sqrt(max(0.0, 1.0-(q.y > 0.0 ? t*t : t*t*t*t)));
+        vec2 e = vec2(abs(q.x)-beam, abs(q.y)-len);
+        return length(max(e, 0.0))+min(max(e.x, e.y), 0.0);
+      }
+      // The bow pushes up a cushion of water and two crests that run back along the sides.
+      float hullWave(vec2 q, float sp) {
+        float cushion = exp(-pow((q.y-2.45)/.75, 2.0)-pow(q.x/1.05, 2.0));
+        float arm = exp(-pow((abs(q.x)-(.95+.36*max(0.0, 2.45-q.y)))/.33, 2.0))*smoothstep(-2.8, 1.2, q.y)*smoothstep(3.1, 2.1, q.y);
+        return sp*sp*(.1*cushion+.08*arm);
+      }
+      // x: foam, y: shade (the hull, not the sky, is what the water beside it reflects), zw: slope.
+      vec4 hullWater(vec2 p, float time) {
+        vec4 acc = vec4(0.0, 1.0, 0.0, 0.0);
+        for (int i=0; i<4; i++) {
+          vec4 v = vessels[i];
+          vec2 d = p-v.xy;
+          if (v.w < 0.0 || dot(d,d) > 196.0) continue;
+          float c = cos(v.z), s = sin(v.z), sp = clamp(v.w/6.0, 0.0, 1.0);
+          vec2 right = vec2(c,-s), ahead = vec2(-s,-c), q = vec2(dot(d,right), dot(d,ahead));
+          float dist = hullDistance(q);
+          if (dist < -.08) continue;                       // under the hull itself
+          float wave = hullWave(q, sp);
+          vec2 grad = vec2(hullWave(q+vec2(.05,0.0), sp)-wave, hullWave(q+vec2(0.0,.05), sp)-wave)/.05;
+          acc.zw += right*grad.x+ahead*grad.y;
+          // Foam hugs the waterline, streams aft with speed and laps a little even at rest.
+          float lace = noise(q*vec2(2.6,1.1)+vec2(0.0, time*(.4+v.w*.45)))*.6+noise(q*vec2(6.0,3.0)-time*.7)*.4;
+          float band = smoothstep(-.08, .06, dist)*exp(-max(dist, 0.0)*(3.2-1.6*sp));
+          acc.x = max(acc.x, band*smoothstep(.35-.2*sp, .8, lace)*(.25+.55*sp));
+          acc.x = max(acc.x, smoothstep(.07, .16, wave)*smoothstep(.4, .8, lace)*.7);
+          acc.y = min(acc.y, 1.0-.5*exp(-max(dist, 0.0)*2.2));
+        }
+        return acc;
       }
       float shoreDistance(vec2 p) {
         float d = 1000.0;
@@ -131,7 +169,8 @@ export function createOceanMaterial() {
         }
         // Ring crests are ~18 cm apart: drawn only where a pixel is finer than that.
         if (rain > .01 && footprint < .06) ripple += rainRipple(p,time)*.4*rain*(1.0-smoothstep(.02,.06,footprint));
-        vec3 normal = normalize(vec3(-field.y-ripple.x*wind.y,1.0,-field.z-ripple.y*wind.y));
+        vec4 hull = hullWater(p, time);
+        vec3 normal = normalize(vec3(-field.y-hull.z-ripple.x*wind.y,1.0,-field.z-hull.w-ripple.y*wind.y));
         vec3 halfDir = normalize(viewDir+sunDir);
         float nv = max(.025,dot(normal,viewDir));
         float nl = max(.001,dot(normal,sunDir));
@@ -150,8 +189,9 @@ export function createOceanMaterial() {
         water *= .88+.12*clamp(field.x+.5,0.0,1.0);
         // Light through the thin top of a swell: a green-blue glow on crests seen against the sun.
         water += vec3(.0,.05,.045)*smoothstep(.1,.6,field.x)*pow(max(0.0,dot(viewDir,-sunDir)*.5+.5),2.0)*(1.0-night);
+        water *= mix(1.0, hull.y, .6);
         water *= 1.0-night*.7;
-        vec3 color = mix(water,skyColor(reflection),fresnel);
+        vec3 color = mix(water,skyColor(reflection)*hull.y,fresnel);
 
         // Dielectric microfacet sun glints, widened when the footprint grows.
         float roughness = .22+.11*smoothstep(.2,4.0,footprint);
@@ -178,7 +218,7 @@ export function createOceanMaterial() {
         float windy = smoothstep(1.0,1.5,wind.y);
         float crestFoam = smoothstep(.62-.25*windy,.95,field.x+(streak-.5)*.35)*smoothstep(.48,.78,streak)*(.12+.3*windy);
         crestFoam *= 1.0-.5*smoothstep(.4,3.0,footprint);
-        float foam = clamp(beachFoam+crestFoam,0.0,.8);
+        float foam = clamp(beachFoam+crestFoam+hull.x,0.0,.85);
         vec3 foamLight = linearColor(vec3(.86,.92,.89))*mix(1.0,.09,night)*(1.0-rain*.3);
         color = mix(color,foamLight,foam);
         float haze = 1.0-exp(-pow(distanceToEye*mist*.85,2.0));

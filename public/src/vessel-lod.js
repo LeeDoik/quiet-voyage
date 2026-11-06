@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createWindRig } from './wind-rig.js';
 
 const cache=new WeakMap();
 function templateFor(source) {
@@ -34,7 +35,8 @@ export function createVesselLOD(source, tag='remote-boat') {
   const root=new THREE.Group();root.userData.tag=tag;
   const high=template.high.clone(true),low=template.low.clone(true);
   root.add(high,low);low.visible=false;
-  root.vesselLOD={high,low,level:0};
+  // Its own sails: a boat on the other tack fills them on the other side.
+  root.vesselLOD={high,low,level:0,rig:createWindRig(high)};
   return root;
 }
 

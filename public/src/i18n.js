@@ -30,7 +30,9 @@ const en = {
 
   // Field guide
   '바다 도감  {seen} / {total}': 'Sea Life  {seen} / {total}',
-  '◆ {name}  ·  {n}번': '◆ {name}  ·  seen {n}×',
+  '{n}번': '×{n}',
+  '도감 버튼으로 닫기': 'Tap Guide to close',
+  'K / ESC 닫기': 'K / Esc to close',
   '돌고래': 'Dolphin', '혹등고래': 'Humpback whale', '범고래': 'Orca', '바다거북': 'Sea turtle',
   '쥐가오리': 'Manta ray', '날치': 'Flying fish', '바닷새': 'Seabirds',
   '무리 지어 숨을 쉬며 물 위로 솟고, 움직이는 배의 뱃머리 물결을 즐겨 탄다.': 'Surfaces in pods and loves to ride a moving bow wave.',
@@ -112,7 +114,7 @@ const en = {
 
   // Touch buttons (labels sit inside a ~44 px circle: keep them short)
   '돌기': 'orbit', '왼쪽': 'left', '오른쪽': 'right', '가까이': 'closer', '빠르게': 'faster', '멀리': 'farther', '천천히': 'slower',
-  '저장': 'Save', '닫기': 'Close', '노트': 'Log', '도감': 'Guide', '빛': 'Glow', '흔적': 'Trail', '편지': 'Bottle', '사진': 'Photo', '동행': 'Duo',
+  '저장': 'Save', '닫기': 'Close', '노트': 'Log', '도감': 'Guide', '빛': 'Glow', '흔적': 'Trail', '편지': 'Bottle', '사진': 'Photo', '동행': 'Duo', '소리': 'Sound',
 
   // Light ripples and trails
   '빛이 다시 모일 때까지 잠시 기다려요': 'Wait a moment for the light to gather',
@@ -124,6 +126,7 @@ const en = {
 
   // Bottles: PHRASES travel as indices 0–7, only their display is translated
   '병에 담을 말 고르기 · 숫자 키 · B 닫기': 'Choose a message · number keys · B close',
+  '편지 버튼으로 닫기': 'Tap Bottle to close',
   '좋은 바람이 함께하길': 'Fair winds to you',
   '여기 노을이 정말 아름다워요': 'The sunset here is lovely',
   '고래를 봤어요! 근처에 있어요': "Saw a whale! It's close by",

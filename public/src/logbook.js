@@ -2,6 +2,7 @@
 // notices the screen shows when something is found. This voyage resets with the game; the
 // lifetime totals are kept in this browser on the web build only.
 import { platform } from './platform.js';
+import { sfx } from './audio.js';
 import { t } from './i18n.js';
 
 const KEY = 'sea.log.v1';
@@ -55,7 +56,7 @@ export function createLogbook() {
       if (voyage.islands.has(s.id)) return;
       voyage.islands.add(s.id);
       const first = !totals.islands.includes(s.id);
-      if (first) { totals.islands.push(s.id); save(); }
+      if (first) { totals.islands.push(s.id); save(); sfx.discover(); }
       record({ kind: 'island', title: s.name, description: t(first ? '처음 닿은 섬' : '다시 지나간 섬') });
       say(first ? t('{name} · 처음 보는 섬', { name: s.name }) : s.name, 4.5);
     },
@@ -65,6 +66,7 @@ export function createLogbook() {
       const ever = totals.species[n.species] || 0;
       totals.species[n.species] = ever + 1;
       if (count === 1) record({ kind: 'creature', title: n.name, description: ever ? n.text : t('{text} · 처음 만난 생물', { text: n.text }) });
+      if (!ever) sfx.discover();
       say(n.text, 5);
       save();
     },

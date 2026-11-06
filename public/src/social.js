@@ -4,13 +4,15 @@ import { createQuietSea } from './quiet-sea.js';
 import { createQuietWater } from './quiet-water.js';
 import { platform } from './platform.js';
 import { connectSea } from './net/sea-net.js';
-import { surface } from './sea.js';
+import { sailWind } from './sea.js';
+import { createFloat } from './boat-float.js';
+import { createWake } from './wake.js';
 import { lang, t } from './i18n.js';
 
 const validPose=s=>s&&[s.x,s.y,s.z].every(v=>Number.isFinite(v)&&Math.abs(v)<1e6)&&Array.isArray(s.q)&&s.q.length===4&&s.q.every(Number.isFinite)&&Math.hypot(...s.q)>.5&&Math.hypot(...s.q)<1.5;
 // Multiplayer goes to our own sea server (server/worker.js); without one the sea is solo.
 const webNet=platform.web&&!!platform.server;
-const MAX_REMOTE=64,LABEL_RANGE=180;
+const MAX_REMOTE=64,LABEL_RANGE=180,WAKES=4;
 // [Korean, English] pairs: one pick, so a name means the same thing in both. English stays ≤16 chars ("the " + 6 + " " + 5).
 const NAME_FIRST=[['푸른','Blue'],['고요한','Still'],['은빛','Silver'],['작은','Little'],['먼','Far'],['바람의','Windy'],['노을빛','Rosy'],['새벽','Dawn'],['달빛','Moon'],['하얀','White'],['잔잔한','Calm'],['소금빛','Salt'],['별빛','Bright'],['따뜻한','Warm'],['느린','Slow'],['맑은','Clear']];
 const NAME_SECOND=[['물새','Tern'],['고래','Whale'],['돛','Sail'],['파도','Wave'],['별','Star'],['등대','Light'],['갈매기','Gull'],['산호','Coral'],['물결','Swell'],['바람','Wind'],['섬','Isle'],['구름','Cloud'],['해초','Kelp'],['조개','Shell'],['수평선','Tide'],['나침반','North']];
@@ -44,6 +46,22 @@ export function createSocial(scene) {
   const practiceQuiet=createQuietSea();
   const sessionId=webNet?1+Math.floor(platform.entropy()*0xfffffffe):0,ownName=webNet?boatName():null;
   const canPractice=()=>!connected;
+  // The nearest few boats leave a wake and part the water (ocean-material.js vessel slots).
+  const wakes=Array.from({length:WAKES},()=>({wake:createWake(scene),id:null}));
+  let nearest=[];
+  function wakeFor(id){
+    let slot=wakes.find(w=>w.id===id);
+    if(!slot){slot=wakes.find(w=>w.id===null);if(!slot)return null;slot.id=id;slot.wake.clear();}
+    slot.wake.mesh.visible=true;return slot.wake;
+  }
+  function releaseWakes(keep){for(const w of wakes)if(w.id!==null&&!keep.has(w.id)){w.id=null;w.wake.clear();w.wake.mesh.visible=false;}}
+  // Waves are shared, so a remote hull's heave, pitch and heel are worked out here from its position.
+  function float(boat,dt,pose,seaTime){
+    const f=boat.userData.float??=createFloat();
+    const {y,pitch,roll}=f.step(dt,pose.x,pose.z,pose.yaw,pose.speed,seaTime);
+    boat.position.set(pose.x,y,pose.z);boat.rotation.set(pitch,pose.yaw,roll,'YXZ');
+  }
+  for(const w of wakes)w.wake.mesh.visible=false;
   function makeBoat(tag){const source=scene.children.find(o=>o.userData.tag==='boat');const mesh=source&&createVesselLOD(source,tag);if(mesh)scene.add(mesh);return mesh;}
   function setLabel(boat,name){
     // The server sends '' for a boat without a name (older servers sent '이름 없는 배'; t() maps that too).
@@ -55,7 +73,7 @@ export function createSocial(scene) {
     const label=makeLabel(text);label.position.set(0,10.5,0);boat.add(label);boat.userData.label=label;
   }
   function removeBoat(id){const boat=boats.get(id);if(boat){scene.remove(boat);if(boat.userData.label)disposeLabel(boat.userData.label);}boats.delete(id);}
-  function clearBoats(){for(const id of boats.keys())removeBoat(id);}
+  function clearBoats(){for(const id of boats.keys())removeBoat(id);releaseWakes(new Set());nearest=[];}
   function endPractice(){practice=false;practiceTime=0;practiceTraceAt=0;practicePulseAt=3;practiceQuiet.reset();if(practiceBoat)scene.remove(practiceBoat);practiceBoat=null;}
   function watch(live){
     room=live;connected=true;quiet.reset();
@@ -83,7 +101,7 @@ export function createSocial(scene) {
     rotation.fromArray(pose.q).normalize();euler.setFromQuaternion(rotation,'YXZ');
     return {id,x:pose.x,y:pose.y,z:pose.z,yaw:euler.y,speed:Number.isFinite(pose.speed)?Math.max(0,Math.min(40,pose.speed)):0};
   }
-  function practicePeer(dt,boat){
+  function practicePeer(dt,boat,seaTime){
     practiceTime+=dt;
     if(!practiceBoat)practiceBoat=makeBoat('practice-boat');
     const right=7+Math.sin(practiceTime*.2)*3,forward=13;
@@ -91,7 +109,7 @@ export function createSocial(scene) {
     practiceQuiet.update(dt,p,[],'practice');
     if(practiceTime>=practiceTraceAt){practiceQuiet.act('trace',p);practiceTraceAt=practiceTime+22;}
     if(practiceTime>=practicePulseAt){practiceQuiet.act('pulse',p);practicePulseAt=practiceTime+12;}
-    if(practiceBoat){practiceBoat.position.set(p.x,p.y,p.z);practiceBoat.rotation.y=p.yaw;}
+    if(practiceBoat)float(practiceBoat,dt,p,seaTime);
     return {...p,raw:p,quiet:practiceQuiet.packet()};
   }
   function update(dt,input,boat,seaTime=0){
@@ -111,14 +129,24 @@ export function createSocial(scene) {
       // Crowds stay affordable: only the nearest boats are drawn and take part in the quiet sea.
       if(near.length>MAX_REMOTE){near.sort((a,b)=>a.d-b.d);near.length=MAX_REMOTE;}
       for(const {id,player}of near){
-        const state=player.state,raw=validPose(player.stateRaw)?player.stateRaw:state;
+        const state=player.state,raw=validPose(player.stateRaw)?player.stateRaw:state,pose=peerPose(id,state);
         present.add(id);let remote=boats.get(id);
         if(!remote){remote=makeBoat('remote-boat');if(remote)boats.set(id,remote);}
-        if(remote){remote.position.set(state.x,platform.web?surface(state.x,state.z,seaTime)+.12:state.y,state.z);remote.quaternion.fromArray(state.q).normalize();setLabel(remote,player.name);}
-        peers.push({...peerPose(id,state),raw:peerPose(id,raw),quiet:raw.quiet});
+        if(remote){
+          if(platform.web)float(remote,dt,pose,seaTime);else{remote.position.set(state.x,state.y,state.z);remote.quaternion.fromArray(state.q).normalize();}
+          setLabel(remote,player.name);
+        }
+        peers.push({...pose,raw:peerPose(id,raw),quiet:raw.quiet});
       }
       for(const id of boats.keys())if(!present.has(id))removeBoat(id);
-    }else if(practice)peers.push(practicePeer(dt,boat));
+    }else if(practice)peers.push(practicePeer(dt,boat,seaTime));
+    nearest=peers.map(p=>({p,d:(p.x-boat.x)**2+(p.z-boat.z)**2})).sort((a,b)=>a.d-b.d).slice(0,WAKES).map(n=>n.p);
+    releaseWakes(new Set(nearest.map(p=>p.id)));
+    for(const p of nearest){
+      wakeFor(p.id)?.update(dt,p.x,p.z,p.yaw,p.speed,seaTime);
+      const hull=p.id==='practice'?practiceBoat:boats.get(p.id),lod=hull?.vesselLOD;
+      if(lod&&!lod.level)lod.rig.update(dt,sailWind(p.yaw,p.speed,seaTime),seaTime);
+    }
     quiet.update(dt,boat,peers,room?.id||'self');
     if(pressed('KeyE'))quiet.act('pulse',boat);
     if(pressed('KeyR'))quiet.act('trace',boat);
@@ -150,6 +178,8 @@ export function createSocial(scene) {
       if(practiceBoat)prepareVessel(practiceBoat,camera,frustum,optimized);
     },
     clock(){return connected&&room?.serverTime?room.serverTime():null;},
+    /** The nearest other hulls, for the water to part around: [{x, z, yaw, speed}]. */
+    vessels(){return nearest;},
     /** Bottles other sailors floated nearby (web only), minus our own. */
     bottles(){return room?.bottles?room.bottles().filter(b=>b.by!==sessionId):[];},
     dropBottle(p){return !!(connected&&room?.dropBottle?.(p));},

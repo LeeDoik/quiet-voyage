@@ -7,6 +7,7 @@ import { bakeTexture } from './materials.js';
 import { bottlesNear } from './world-gen.js';
 import { surface } from './sea.js';
 import { platform } from './platform.js';
+import { sfx } from './audio.js';
 import { t } from './i18n.js';
 
 // The server only accepts an index below PHRASES.length (server/src/worker.js BOTTLE_PHRASES).
@@ -49,7 +50,9 @@ export function createBottles(scene, { drop }) {
       if (picker && pressed('Escape')) picker = false;
       if (picker) for (let i = 0; i < PHRASES.length; i++) if (pressed(`Digit${i + 1}`)) {
         picker = false;
-        events.push({ kind: 'notice', text: t(drop(i) ? '병을 띄웠어요 — 누군가 찾게 될 거예요' : '온라인일 때 띄운 병만 다른 항해자에게 닿아요') });
+        const floated = drop(i);
+        if (floated) sfx.cork();
+        events.push({ kind: 'notice', text: t(floated ? '병을 띄웠어요 — 누군가 찾게 될 거예요' : '온라인일 때 띄운 병만 다른 항해자에게 닿아요') });
       }
       previous = new Set(input.keys);
       const list = bottlesNear(boat.x, boat.z, SHOW_RANGE, near).map(b => ({ id: b.id, x: b.x, z: b.z, text: t(LORE[b.line % LORE.length]), from: t('오래된 병') }));
@@ -59,7 +62,7 @@ export function createBottles(scene, { drop }) {
         if (found.has(b.id) || mesh.count >= CAP) continue;
         const d = Math.hypot(b.x - boat.x, b.z - boat.z);
         if (playing && d < PICK_RANGE) {
-          found.add(b.id); save();
+          found.add(b.id); save(); sfx.paper();
           events.push({ kind: 'bottle', title: t('병 편지 · {from}', { from: b.from }), text: `“${b.text}”` });
           continue;
         }

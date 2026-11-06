@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs"
+    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs && node tests/dolphin-ride.mjs && node tests/boat-float.mjs && node tests/fonts.mjs && node tests/touch-layout.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

@@ -1,0 +1,32 @@
+{
+  "qv-serif-ko.woff2": {
+    "family": "QV Serif KO",
+    "source": "GowunBatang-Regular.ttf from google/fonts@eb20e9cf19d9 ofl/gowunbatang",
+    "licence": "OFL-GowunBatang.txt",
+    "chars": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°·×—“”…←↑→↓▲▶▼◀◆◇가각간갈감갑값같개거걸검게겨격결겼계고곳곶과괜교구군그근금기긴길깊까깐께꼬꼭꾸끄끔끝끼나난날남났내너넓네노높누눈눌느는늘능늬니님다단닫달담닷당닿대더덕델도돈돌동돛되된될두둔뒤드들듯등딩따때떨떼뛰뜬뜻띄라란람랐래러레렌려렸로록롭료룹르른를름리린링마만말맑매맴머먹먼멀메며면모못무물미민바반밤방배백뱃버번범벽별병보복봇봉봤부북분불붉비빗빛빠뿜사산살삼상새생서선섬성세셰소속솔솟수순숨숫숲쉬쉰스슴습시식신실십싼쓴씩아안앉않았앙야얀얕어언엄없었에엔여연옅예오온올와완왔외왼요용우운울움워웠위유율으은을음의이인일잃임입있자작잔잠장저적전접정제젠져조족종좋주준중쥐즐지직진집짧째쪽찮찾처척천첫쳤초최출측치친침컨컬크큰키타탄터텍톱통트튼파팽펴편평푸풍프피픽하한할함항해했행향험헤현형호혹혼화환황회후흐흔흰히힌"
+  },
+  "qv-hand-ko.woff2": {
+    "family": "QV Hand KO",
+    "source": "NanumPenScript-Regular.ttf from google/fonts@eb20e9cf19d9 ofl/nanumpenscript",
+    "licence": "OFL-NanumPenScript.txt",
+    "chars": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~“”가감같개거게결고곳괜구그근기길까깐께꼭끄나난날너노는늘다담닷당대도돈돌들등따때뛰라람래려로롭르른를름리만말맑머먼멀면모무물바밤배범별병보봤북불비빛빠사산새서섬세숨쉬쉰신쓴아안않았어언없에엔여오올외요워위유으은을의이인잃있잠장저정젠좋준쥐즐지직찮찾처천치타톱트푸하함항해혹화흐히"
+  },
+  "qv-serif.woff2": {
+    "family": "QV Serif",
+    "source": "Lora[wght].ttf at wght 400 from google/fonts@eb20e9cf19d9 ofl/lora",
+    "licence": "OFL-Lora.txt",
+    "chars": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°·×—“”…"
+  },
+  "qv-hand.woff2": {
+    "family": "QV Hand",
+    "source": "Caveat[wght].ttf at wght 600 from google/fonts@eb20e9cf19d9 ofl/caveat",
+    "licence": "OFL-Caveat.txt",
+    "chars": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~“”"
+  },
+  "qv-symbols.woff2": {
+    "family": "QV Symbols",
+    "source": "GowunBatang-Regular.ttf from google/fonts@eb20e9cf19d9 ofl/gowunbatang",
+    "licence": "OFL-GowunBatang.txt",
+    "chars": "←↑→↓▲▶▼◀◆◇"
+  }
+}

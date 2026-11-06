@@ -2,7 +2,11 @@
 
 끝없는 바다를 항해하며 섬과 고래를 만나는 웹 게임입니다. 여러 사람이 같은 바다에 접속할 수 있습니다. 게임은 빌드 과정이 없는 정적 파일(`public/`)이고, 서버는 Cloudflare Worker와 Durable Objects(`server/worker.js`)입니다. 둘을 한 번에 배포합니다.
 
+게임의 모든 정보(디자인 원칙, 세계, 생물, 함께하기, 그래픽, 변경 기록, 할 일)는 [docs/GAME.md](docs/GAME.md)에 모아 두었습니다.
+
 ## 실행과 배포
+
+Finder에서 `start.command`를 더블클릭하면 개발 서버를 띄우고 브라우저에서 게임을 엽니다(처음이면 `npm install`도 합니다). 끄려면 그 터미널 창에서 Ctrl+C를 누릅니다.
 
 ```bash
 npm install          # wrangler (처음 한 번)
@@ -23,7 +27,7 @@ node -e "const k=require('crypto').randomBytes(12).toString('hex');require('fs')
 
 ## 조작
 
-W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바다 도감, B 병 편지(숫자로 문구 선택), C 사진 모드(Space로 저장), E 빛물결, R 빛의 흔적, H 동행 연습(오프라인). 휴대폰은 화면 버튼으로 조작합니다(`public/src/touch.js`).
+W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바다 도감, B 병 편지(숫자로 문구 선택), C 사진 모드(Space로 저장), E 빛물결, R 빛의 흔적, H 동행 연습(오프라인), M 소리 끄기·켜기. 휴대폰은 화면 버튼으로 조작합니다(`public/src/touch.js`).
 
 ## 구조
 
@@ -35,7 +39,12 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 | `public/src/world-gen.js` | 청크 단위 결정론적 섬·생물·병 생성 |
 | `public/src/islands.js`, `marine-life.js`, `bottles.js` | 스트리밍 섬, 해양 생물, 병 편지 |
 | `public/src/sailing.js`, `sea.js` | 배, 바람, 파도, 항적, 충돌 |
+| `public/src/boat-float.js`, `wake.js`, `wind-rig.js` | 물에 뜨는 방식(스프링 부력, 바람에 기울기), 항적 리본, 바람에 부푸는 돛. 내 배와 다른 배가 함께 쓴다 |
+| `public/src/ocean-material.js`, `wave-field.js` | 바다 셰이더(너울, 잔물결, 반사, 선체 주변 거품·물결), CPU와 같은 너울 식 |
+| `public/src/audio.js` | 합성한 소리 전부(마스터·리미터, 바다·배·생물·행동 소리, M으로 끄기) |
+| `public/src/dolphin-ride.js` | 돌고래가 뱃머리 물결을 타고 놓아주는 규칙 |
 | `public/src/interface.js`, `touch.js`, `logbook.js` | HUD, 터치 조작, 항해 기록 |
+| `public/assets/fonts/`, `tools/fonts.mjs` | HUD 글꼴 서브셋(OFL)과 그것을 다시 만드는 도구. 게임 글자가 바뀌면 `node tools/fonts.mjs` |
 | `public/src/social.js`, `net/sea-net.js` | 멀티플레이 클라이언트 |
 | `server/worker.js` | 정적 파일 + `/ws` → 셀 Durable Object |
 | `public/vendor/` | three.js 0.185.1 (MIT) |
@@ -51,7 +60,7 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 - 낮과 밤은 플레이어 기기의 실제 현지 시각을 따른다(06시 해돋이, 12시 한낮, 18시 노을, 밤에는 별). 온라인이면 서버 시계에 기기의 시간대를 더해 쓴다. 해가 뜨고 지며 노을이 지고, 밤에는 별이 뜨고 등대 불빛이 돌며 항적이 푸르게 빛난다.
 - 날씨는 200초 단위로 바뀐다(맑음, 산들바람, 돌풍, 비, 해무). 돌풍과 비는 실제 바람 세기를 바꾸고(`sea.js`의 `env.gust`), 비가 그친 뒤에는 해를 등진 쪽에 무지개가 뜬다. 날씨도 서버 시계를 따른다.
 - 항적은 배가 실제로 지나간 길을 따라 깔리는 리본 메시다(`sailing.js`). 켈빈 각(19.5°)으로 벌어지며 메시 하나로 그린다. 바다 셰이더는 잔물결 방향을 황금각으로 흩어 줄무늬를 없앴고, 픽셀보다 가는 옥타브와 먼 섬의 계산은 건너뛴다.
-- 소리(`public/src/audio.js`)는 파일 없이 합성한다. 고래 노래, 숨소리, 갈매기, 돌고래 휘파람, 선체 삐걱임, 빗소리가 거리에 따라 작아진다.
+- 소리(`public/src/audio.js`)는 파일 없이 합성하고, 화면에 보이는 것에서만 난다. 음악은 없다. 낮은 너울, 겉보기 바람, 속도에 따라 커지는 뱃전 물소리, 배의 실제 흔들림을 따르는 찰랑임과 삐걱임, 맞바람에 떠는 돛, 비와 갑판의 빗방울, 해안 200 m 안의 파도 소리가 깔린다. 고래·갈매기·돌고래 소리는 카메라 기준으로 좌우가 나뉘고 멀수록 작고 어두워진다. M으로 끄고 켠다(이 브라우저에 기억).
 - 병 편지(`public/src/bottles.js`): 바다 곳곳에 오래된 병이 떠 있다. 온라인에서는 정해진 문구 8개 중 하나를 골라 병을 띄우면 서버가 셀마다 최대 40개를 7일 동안 보관한다. 자유 입력이 없으니 검열할 것도 없다.
 
 ## 항해 노트

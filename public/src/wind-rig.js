@@ -1,11 +1,29 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// The model's sails are single quads; split each triangle into n² so the belly and luff below
+// have vertices to bend. Shared vertices keep the shading smooth.
+function subdivide(geometry, n) {
+  const flat = geometry.index ? geometry.toNonIndexed() : geometry, src = flat.attributes.position.array, out = [];
+  for (let t = 0; t < src.length; t += 9) {
+    const at = (i, j) => { const k = n - i - j; return [0, 1, 2].map(d => (src[t + d] * k + src[t + 3 + d] * i + src[t + 6 + d] * j) / n); };
+    for (let i = 0; i < n; i++) for (let j = 0; j < n - i; j++) {
+      out.push(...at(i, j), ...at(i + 1, j), ...at(i, j + 1));
+      if (i + j < n - 1) out.push(...at(i + 1, j), ...at(i + 1, j + 1), ...at(i, j + 1));
+    }
+  }
+  const result = new THREE.BufferGeometry();
+  result.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  return mergeVertices(result);
+}
 
 // GLB model coordinates: bow +X, up +Y. Keep each sail's luff attached.
 export function createWindRig(model){
   const sails=[];
   model.traverse(mesh=>{
     if(!mesh.isMesh||!/sail|jib/i.test(mesh.name))return;
-    mesh.geometry=mesh.geometry.clone();
+    // Remote boats clone an already split sail; split only the model's original quads.
+    mesh.geometry=mesh.geometry.attributes.position.count<40?subdivide(mesh.geometry,10):mesh.geometry.clone();
     const base=mesh.geometry.attributes.position.array.slice();
     sails.push({mesh,base,jib:/jib/i.test(mesh.name)});
     mesh.userData.dynamicSail=true;
@@ -29,7 +47,7 @@ export function createWindRig(model){
           const pressure=Math.min(1,air.apparentSpeed/6);
           const flutter=Math.sin(time*9+y*2)*.025*(1-air.efficiency)*weight;
           const side=Math.sign(angle)||1;
-          positions.setXYZ(i,luff+span*Math.cos(a),y,-span*Math.sin(a)+side*(belly*.16*pressure+flutter));
+          positions.setXYZ(i,luff+span*Math.cos(a),y,-span*Math.sin(a)+side*(belly*.22*pressure+flutter));
         }
         positions.needsUpdate=true;mesh.geometry.computeVertexNormals();mesh.geometry.computeBoundingSphere();
       }

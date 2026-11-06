@@ -111,7 +111,7 @@ export function createWorld(scene, { realDay = null } = {}) {
     for(let i=0;i<SHORE_SLOTS;i++){const s=near[i];if(s){u.shores.value[i].set(s.x,s.z,s.rx,s.rz);u.shoreShape.value[i].set(s.rot,s.a2,s.a3,s.a5);}else u.shores.value[i].set(0,0,0,0);}
     shoreSpecs.length=0;shoreSpecs.push(...near);
   }
-  function reset(s=1){elapsed=0;clock=0;seed=Number.isFinite(s)?s:1;discoveries=[];events=[];shoreClock=0;rainbowLevel=0;lastWeather='clear';env.rain.value=0;env.gust=0;env.night.value=0;waterMat.uniforms.time.value=0;waterMat.uniforms.vessel.value.set(0,0,0,0);water.reset();islands.reset();life.reset();}
+  function reset(s=1){elapsed=0;clock=0;seed=Number.isFinite(s)?s:1;discoveries=[];events=[];shoreClock=0;rainbowLevel=0;lastWeather='clear';env.rain.value=0;env.gust=0;env.night.value=0;waterMat.uniforms.time.value=0;for(const v of waterMat.uniforms.vessels.value)v.set(0,0,0,-1);water.reset();islands.reset();life.reset();}
   /** `shared`: the server's world clock in seconds when online, so day, weather and wildlife match. */
   function update(dt,boat,shared=null,camera=null){
     elapsed+=dt;clock=Number.isFinite(shared)?shared:elapsed;
@@ -125,7 +125,7 @@ export function createWorld(scene, { realDay = null } = {}) {
     // The edge of the map is a thickening sea mist, not a wall.
     const edge=smoothEdge(Math.hypot(boat.x,boat.z));
     const sunY=40+260*elevation, sx=boat.x-210, sz=boat.z-650;
-    skyMat.uniforms.warm.value=warm;skyMat.uniforms.spin.value=clock*.004;waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessel.value.set(boat.x,boat.z,boat.yaw,boat.speed);
+    skyMat.uniforms.warm.value=warm;skyMat.uniforms.spin.value=clock*.004;waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessels.value[0].set(boat.x,boat.z,boat.yaw,boat.speed);
     waterMat.uniforms.sunDir.value.set(-210,sunY,-650).normalize();
     // The moon rides opposite the sun's height, a little to the east of it.
     const moonY=40-260*elevation;waterMat.uniforms.moonDir.value.set(230,moonY,-620).normalize();
@@ -157,7 +157,9 @@ export function createWorld(scene, { realDay = null } = {}) {
     for(const n of life.drain())events.push({kind:'creature',...n});
   }
   reset();
-  return {reset,update,
+  /** Other hulls the water should part around (nearest first, beyond the player's own). */
+  function vessels(list){const slots=waterMat.uniforms.vessels.value;for(let i=1;i<slots.length;i++){const v=list[i-1];if(v)slots[i].set(v.x,v.z,v.yaw,v.speed);else slots[i].set(0,0,0,-1);}}
+  return {reset,update,vessels,
     prepare:(camera,frustum,boat,optimized)=>{water.prepare(camera,frustum,boat,optimized);islands.prepare(camera,frustum);},
     renderState:()=>water.state(),
     drain:()=>events.splice(0),
