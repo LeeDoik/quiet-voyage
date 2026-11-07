@@ -42,7 +42,7 @@ export function createSocial(scene) {
   const boats=new Map(),quiet=createQuietSea(),water=createQuietWater(scene);
   const rotation=new THREE.Quaternion(),axis=new THREE.Vector3(0,1,0),euler=new THREE.Euler(0,0,0,'YXZ');
   let room=null,joining=false,generation=0,retry=0,connected=false,sendClock=0,previous=new Set();
-  let practice=false,practiceBoat=null,practiceTime=0,practiceTraceAt=0,practicePulseAt=3;
+  let practice=false,practiceBoat=null,practiceTime=0,practicePulseAt=3;
   const practiceQuiet=createQuietSea();
   const sessionId=webNet?1+Math.floor(platform.entropy()*0xfffffffe):0,ownName=webNet?boatName():null;
   const canPractice=()=>!connected;
@@ -74,7 +74,7 @@ export function createSocial(scene) {
   }
   function removeBoat(id){const boat=boats.get(id);if(boat){scene.remove(boat);if(boat.userData.label)disposeLabel(boat.userData.label);}boats.delete(id);}
   function clearBoats(){for(const id of boats.keys())removeBoat(id);releaseWakes(new Set());nearest=[];}
-  function endPractice(){practice=false;practiceTime=0;practiceTraceAt=0;practicePulseAt=3;practiceQuiet.reset();if(practiceBoat)scene.remove(practiceBoat);practiceBoat=null;}
+  function endPractice(){practice=false;practiceTime=0;practicePulseAt=3;practiceQuiet.reset();if(practiceBoat)scene.remove(practiceBoat);practiceBoat=null;}
   function watch(live){
     room=live;connected=true;quiet.reset();
     live.on('reconnecting',()=>{if(room===live){connected=false;clearBoats();quiet.reset({keepSequence:true});water.clear();}});
@@ -107,7 +107,6 @@ export function createSocial(scene) {
     const right=7+Math.sin(practiceTime*.2)*3,forward=13;
     const p={id:'practice',x:boat.x+Math.cos(boat.yaw)*right-Math.sin(boat.yaw)*forward,y:boat.y,z:boat.z-Math.sin(boat.yaw)*right-Math.cos(boat.yaw)*forward,yaw:boat.yaw,speed:boat.speed};
     practiceQuiet.update(dt,p,[],'practice');
-    if(practiceTime>=practiceTraceAt){practiceQuiet.act('trace',p);practiceTraceAt=practiceTime+22;}
     if(practiceTime>=practicePulseAt){practiceQuiet.act('pulse',p);practicePulseAt=practiceTime+12;}
     if(practiceBoat)float(practiceBoat,dt,p,seaTime);
     return {...p,raw:p,quiet:practiceQuiet.packet()};
@@ -149,7 +148,6 @@ export function createSocial(scene) {
     }
     quiet.update(dt,boat,peers,room?.id||'self');
     if(pressed('KeyE'))quiet.act('pulse',boat);
-    if(pressed('KeyR'))quiet.act('trace',boat);
     previous=new Set(input.keys);
     water.update(quiet.visual(),boat,seaTime);
     if(connected&&room){

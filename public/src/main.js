@@ -10,6 +10,7 @@ import { createPerformance } from './performance.js';
 import { createGraphics } from './graphics.js';
 import { platform } from './platform.js';
 import { createTouch } from './touch.js';
+import { createFullscreen } from './fullscreen.js';
 import { createLogbook } from './logbook.js';
 import { createBottles, PHRASES } from './bottles.js';
 import { clearance } from './sea.js';
@@ -20,7 +21,7 @@ document.documentElement.lang=lang; document.title=t('함께 항해');
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
 const scene=new THREE.Scene(); const camera=new THREE.PerspectiveCamera(50,1,.1,2000);
 function resize(){renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.fov=innerHeight>innerWidth?66:50;camera.updateProjectionMatrix();} addEventListener('resize',resize); resize();
-const world=createWorld(scene,platform.web?{realDay:-new Date().getTimezoneOffset()*60}:{}), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene);
+const world=createWorld(scene), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene);
 let phase='menu', demoMode=false;
 const bots=createBots(scene),visibility=createVisibility(scene,camera);
 const graphics=createGraphics(renderer,scene);
@@ -45,7 +46,7 @@ const performanceTest=createPerformance({renderer,
 });
 window.__sailingPerformance={report:()=>performanceTest.report()};
 function begin(){phase='playing';}
-const touch=createTouch(renderer.domElement), logbook=createLogbook(), bottles=createBottles(scene,{drop:p=>social.dropBottle(p)});
+const touch=createTouch(renderer.domElement), fullscreen=createFullscreen(renderer.domElement,()=>ui.fullscreenBox()), logbook=createLogbook(), bottles=createBottles(scene,{drop:p=>social.dropBottle(p)});
 // Photo mode: the HUD hides, the boat holds its course and the camera orbits it; Space saves a PNG.
 const photo={on:false,time:0,saved:0,yaw:0,dist:16,height:5,shot:false};let lastKeys=new Set();
 function photoCamera(dt,keys){
@@ -73,7 +74,7 @@ if(platform.dev)window.__sea={scene,camera,renderer,sailing,world,social,logbook
 // the frame height one design pixel of text occupies (the HUD scales text by the buffer size).
 function view(){const w=innerWidth,h=innerHeight,b=renderer.getDrawingBufferSize(new THREE.Vector2());return {aspect:w/h,portrait:h>w,k:Math.min(1.9,Math.max(1,640/Math.min(w,h))),unit:Math.max(1,Math.min(b.x,b.y)/720)/b.y};}
 function reset(seed=1){phase='menu';demoMode=false;world.reset(seed);sailing.reset(seed);ui.reset(seed);social.reset(seed);logbook.reset();bottles.reset();photo.on=false;bots.reset(performanceTest.botCount(),{x:0,z:0});spawn();}
-function snapshot(){return {phase,boat:sailing.state(),world:world.state(),social:social.state(),performance:performanceTest.state(),graphics:graphics.state(),visibility:visibility.state(),water:world.renderState(),bots:bots.state(),log:logbook.state(),bottles:bottles.state(),photo:photo.on?{time:photo.time,saved:photo.saved}:null,touch:touch.state(),sound:sfx.state(),view:view()};}
+function snapshot(){return {phase,boat:sailing.state(),world:world.state(),social:social.state(),performance:performanceTest.state(),graphics:graphics.state(),visibility:visibility.state(),water:world.renderState(),bots:bots.state(),log:logbook.state(),bottles:bottles.state(),photo:photo.on?{time:photo.time,saved:photo.saved}:null,touch:touch.state(),fullscreen:fullscreen.state(),sound:sfx.state(),view:view()};}
 const cameras={default(){}, boat(){const b=sailing.state();camera.position.set(b.x+8,5,b.z+10);camera.lookAt(b.x,2,b.z);}, horizon(){const b=sailing.state();camera.position.set(b.x,8,b.z+16);camera.lookAt(b.x,2,b.z-150);}};
 function stageVoyage() {
   social.reset();
@@ -115,6 +116,10 @@ installStudio({canvas:renderer.domElement,scene,renderer,camera,eyeUsesRenderCam
   if(phase==='menu'&&input.keys.size) begin();
   const tapped=code=>input.keys.has(code)&&!lastKeys.has(code);
   if(phase==='playing'&&!demoMode&&tapped('KeyC')){photo.on=!photo.on;photo.time=0;photo.yaw=0;}
+  if(phase==='playing'&&!demoMode&&!photo.on&&tapped('KeyT')){
+    const on=sailing.autopilot(!sailing.state().autopilot.on),name=sailing.state().autopilot.target;
+    logbook.say(on?(name?t('자동 항해 · {name} 쪽으로 가요',{name}):t('자동 항해를 시작해요')):t('키를 다시 잡았어요'));
+  }
   if(photo.on){photo.time+=dt;photo.saved=Math.max(0,photo.saved-dt);if(tapped('Space'))photo.shot=true;}
   if(tapped('KeyM'))sfx.toggleMute();
   lastKeys=new Set(input.keys);

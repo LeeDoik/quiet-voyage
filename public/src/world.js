@@ -10,32 +10,16 @@ import { islandDistance, WORLD_RADIUS } from './world-gen.js';
 import { env } from './sea.js';
 import { sfx } from './audio.js';
 import { SHORE_SLOTS } from './ocean-material.js';
+import { createSky, skyShared } from './sky.js';
+import { createMotes } from './motes.js';
 
-/** `realDay`: seconds east of UTC — the sky follows the player's real clock (web build). */
-export function createWorld(scene, { realDay = null } = {}) {
+export function createWorld(scene) {
   scene.background = new THREE.Color(0xb9d9d7);
   scene.fog = new THREE.FogExp2(0xb9d9d7, 0.00115);
   const hemi = new THREE.HemisphereLight(0xeaf6ed, 0x416e73, 2.0); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe3b9, 2.1); sun.position.set(-100, 120, -200); scene.add(sun, sun.target);
-  const skyMat = new THREE.ShaderMaterial({side:THREE.BackSide, depthWrite:false, uniforms:{warm:{value:0}, night:env.night, rain:env.rain, spin:{value:0}, sunDir:{value:new THREE.Vector3(0,1,0)}},
-    vertexShader:`varying vec3 vDir; void main(){vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-    fragmentShader:`varying vec3 vDir; uniform float warm, night, rain, spin; uniform vec3 sunDir;
-      float h(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
-      void main(){vec3 d=normalize(vDir); float y=d.y;
-        vec3 horizon=mix(mix(vec3(.74,.85,.80),vec3(1.,.68,.48),warm),vec3(.07,.10,.17),night);
-        vec3 top=mix(mix(vec3(.31,.62,.72),vec3(.40,.43,.62),warm),vec3(.02,.03,.07),night);
-        vec3 c=mix(horizon,top,smoothstep(-.03,.75,y));
-        c=mix(c,vec3(.55,.6,.62)*(1.-night*.8),rain*.6);
-        // The same sun glow the ocean reflects (ocean-material.js skyColor).
-        float toSun=max(0.,dot(d,sunDir));
-        c+=mix(vec3(1.,.9,.72),vec3(1.,.55,.3),warm)*(pow(toSun,6.)*.22+pow(toSun,48.)*.45)*(1.-night)*(1.-rain*.75);
-        // Stars: a hashed cell per direction, turning slowly with the night.
-        float a=spin; vec3 q=vec3(d.x*cos(a)-d.z*sin(a),d.y,d.x*sin(a)+d.z*cos(a))*180.;
-        vec3 cell=floor(q); float star=step(.9965,h(cell))*smoothstep(.45,.0,length(fract(q)-.5));
-        c+=vec3(.9,.92,1.)*star*night*(1.-rain)*smoothstep(.02,.2,y)*(.6+.4*h(cell+1.));
-        gl_FragColor=vec4(c,1.);}`});
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(850,32,16),skyMat); sky.userData.tag='sky'; scene.add(sky);
-  const sunDisc=new THREE.Mesh(new THREE.CircleGeometry(20,32),new THREE.MeshBasicMaterial({color:0xffefc7,transparent:true,opacity:.85,depthWrite:false})); sunDisc.userData.tag='sun'; scene.add(sunDisc);
+  const waterMat = createOceanMaterial();
+  const sky = createSky(scene, waterMat.uniforms);   // shares warm, time, sun and moon with the water's reflection
   // Rain: streaks whose fall is computed in the vertex shader from time, in a box that follows
   // the camera — no per-frame CPU work, one draw call.
   const RAIN=2400, rainPos=new Float32Array(RAIN*2*3), rainSeed=new Float32Array(RAIN*2);
@@ -57,14 +41,12 @@ export function createWorld(scene, { realDay = null } = {}) {
     fragmentShader:`varying float vR; uniform float alpha; void main(){ float t=1.-vR; vec3 c=clamp(abs(mod(t*5.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.); gl_FragColor=vec4(c,alpha*.24*sin(clamp(vR,0.,1.)*3.14159)); }`});
   const rainbow=new THREE.Mesh(new THREE.RingGeometry(330,370,96,1,0,Math.PI),bowMat);rainbow.userData.tag='rainbow';rainbow.visible=false;scene.add(rainbow);
   const moonDisc=new THREE.Mesh(new THREE.CircleGeometry(11,32),new THREE.MeshBasicMaterial({color:0xe8eefc,transparent:true,opacity:0,depthWrite:false,fog:false}));moonDisc.userData.tag='moon';scene.add(moonDisc);
-  const waterMat = createOceanMaterial();
-  skyMat.uniforms.sunDir=waterMat.uniforms.sunDir;
   const water=createWaterLOD(scene,waterMat);
   const hillGeo=new THREE.IcosahedronGeometry(1,2);
   function tree(group,x,z,scale,y=6){const t=makeTree({height:7*scale,spread:3*scale,seed:Math.round((x+100)*3+(z+100)*7),kind:'needle'});t.position.set(x,y,z);group.add(t);}
   // Home islands and the open sea beyond are streamed by islands.js; the cove stays hand-built.
   const islands=createIslands(scene);
-  const life=createMarineLife(scene);
+  const life=createMarineLife(scene), motes=createMotes(scene);
   // Two projecting headlands curl around a continuous, shallow inner beach.
   const cove=new THREE.Group();cove.position.set(118,0,-320);cove.scale.setScalar(.76);cove.userData.tag='cove';scene.add(cove);
   const coveMat=(kind,seed,palette,scale)=>triplanar(new THREE.MeshStandardMaterial({roughness:1,side:THREE.DoubleSide,map:bake({kind,seed,palette,size:256}).map}),{scale});
@@ -99,7 +81,6 @@ export function createWorld(scene, { realDay = null } = {}) {
     const r=64+(i%3)*2.4;const [x,y,z]=covePoint(a,r,.5+(i%3)*.3);
     const stone=new THREE.Mesh(hillGeo,coveRock);stone.position.set(x,y,z);stone.scale.set(1.1+(i%4)*.5,.6+(i%3)*.3,.8+(i%2)*.5);stone.rotation.y=i*1.8;stone.userData.tag='shore-rock';cove.add(stone);
   }
-  const cloudMat=new THREE.MeshBasicMaterial({color:0xf4f2df,transparent:true,opacity:.28,depthWrite:false});const clouds=new THREE.Group();clouds.userData.tag='cloud';scene.add(clouds);for(let i=0;i<12;i++){const cloud=new THREE.Mesh(new THREE.SphereGeometry(1,12,8),cloudMat);const a=i*2.4;cloud.position.set(Math.cos(a)*(250+i*17),95+i%3*12,Math.sin(a)*(250+i*17));cloud.scale.set(50+i%3*14,3+i%2*2,14);clouds.add(cloud);}
   // Islands met (by id), the cove and the sunset are the voyage's discoveries; creatures come
   // from marine-life.js. drain() hands new ones to the logbook once.
   let elapsed=0,seed=1,clock=0,discoveries=[],events=[],shoreClock=0,warm=0,night=0,weather='clear',rainbowLevel=0,lastWeather='clear';
@@ -115,30 +96,37 @@ export function createWorld(scene, { realDay = null } = {}) {
   /** `shared`: the server's world clock in seconds when online, so day, weather and wildlife match. */
   function update(dt,boat,shared=null,camera=null){
     elapsed+=dt;clock=Number.isFinite(shared)?shared:elapsed;
-    // A 12-minute day: the sun climbs and sets, warm light at both ends, then a starry night.
-    // Real time: sunrise 06:00, noon high, sunset 18:00 local. Studio: a 12-minute day.
-    const p=realDay===null?(clock%DAY)/DAY:(((clock+realDay)/86400-.25)%1+1)%1,elevation=Math.sin(p*Math.PI*2);
+    // The sun climbs and sets, warm light at both ends, then a starry night.
+    const days=clock/DAY,p=(days%1+1)%1,elevation=Math.sin(p*Math.PI*2);
     warm=smooth(-.2,0,elevation)*(1-smooth(0,.35,elevation))*.95;night=smooth(0,-.28,elevation);
     const w=weatherAt(clock,seed);weather=w.kind;
     env.night.value=night;env.rain.value=w.rain;env.gust=w.gust;
     rainbowLevel+=((w.rainbow&&night<.3?1:0)-rainbowLevel)*(1-Math.exp(-dt*.3));
     // The edge of the map is a thickening sea mist, not a wall.
     const edge=smoothEdge(Math.hypot(boat.x,boat.z));
-    const sunY=40+260*elevation, sx=boat.x-210, sz=boat.z-650;
-    skyMat.uniforms.warm.value=warm;skyMat.uniforms.spin.value=clock*.004;waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessels.value[0].set(boat.x,boat.z,boat.yaw,boat.speed);
+    const sunY=8+260*elevation, moonY=40-260*elevation;   // the sun touches the sea as the light turns gold
+    sky.material.uniforms.spin.value=p*Math.PI*2;   // the stars turn once a day
+    waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessels.value[0].set(boat.x,boat.z,boat.yaw,boat.speed);
     waterMat.uniforms.sunDir.value.set(-210,sunY,-650).normalize();
     // The moon rides opposite the sun's height, a little to the east of it.
-    const moonY=40-260*elevation;waterMat.uniforms.moonDir.value.set(230,moonY,-620).normalize();
+    waterMat.uniforms.moonDir.value.set(230,moonY,-620).normalize();
     moonDisc.position.set(boat.x+230,moonY,boat.z-620);moonDisc.lookAt(boat.x,8,boat.z);moonDisc.material.opacity=.95*night*(1-w.rain*.9);moonDisc.visible=night>.01;
-    sky.position.set(boat.x,0,boat.z);sunDisc.position.set(sx,sunY,sz);sunDisc.lookAt(boat.x,8,boat.z);sunDisc.material.opacity=.85*(1-w.rain*.8);
-    const light=1-night*.82;
-    hemi.intensity=(1.9-warm*.35)*light*(1-w.rain*.25);sun.intensity=(2.1-warm*.45)*(1-night)*(1-w.rain*.6);sun.position.set(sx,Math.max(10,sunY),sz);sun.target.position.set(boat.x,0,boat.z);sun.target.updateMatrixWorld();sun.color.setRGB(1,1-warm*.22,1-warm*.4);
+    sky.mesh.position.set(boat.x,0,boat.z);
+    // One directional light: the sun by day, the moon by night (cool and faint, from the moon's side).
+    const light=1-night*.82, moon=night*(1-w.rain*.8);
+    hemi.intensity=(1.9-warm*.35)*light*(1-w.rain*.25)+.15*moon;sun.intensity=(2.1-warm*.45)*(1-night)*(1-w.rain*.6)+.55*moon;
+    sun.position.set(boat.x-210+440*night,Math.max(10,sunY+(moonY-sunY)*night),boat.z-650+30*night);sun.target.position.set(boat.x,0,boat.z);sun.target.updateMatrixWorld();sun.color.setRGB(1-night*.4,1-warm*.22-night*.25,1-warm*.4);
     hemi.color.setRGB(.92-night*.6,.96-night*.6,.93-night*.45);
-    const fog=[.74+warm*.2,.85-warm*.12,.80-warm*.2].map((c,i)=>c+([.07,.10,.17][i]-c)*night);
+    // Haze takes the horizon's colour (sky.js): pale by day, rose-gold at dusk, deep blue at night.
+    const fog=[.80+warm*.05,.88-warm*.28,.89-warm*.28].map((c,i)=>c+([.075,.11,.21][i]-c)*night);
     scene.fog.color.setRGB(...fog.map(c=>c*(1-w.rain*.25)),THREE.SRGBColorSpace);scene.background.copy(scene.fog.color);
     scene.fog.density=(w.kind==='haze'?.0016:.00115)*(1+1.1*w.rain)*(1+3*edge);waterMat.uniforms.mist.value=scene.fog.density;
-    cloudMat.opacity=(w.kind==='haze'?.42:.25+w.rain*.4)*(1-night*.7);clouds.position.set(boat.x,0,boat.z);clouds.rotation.y=clock*.002;
+    // Cloud cover follows the weather slowly: a few clouds when clear, overcast in rain.
+    const cover={clear:.56,breeze:.53,gust:.48,rain:.5,haze:.5}[w.kind]-.3*w.rain;skyShared.cover.value+=(cover-skyShared.cover.value)*(elapsed<.5?1:1-Math.exp(-dt/20));
+    // A third of the nights, the same for everyone, an aurora (the night's number changes at noon).
+    const nightNo=Math.floor(days-.25);skyShared.aurora.value=Math.abs(Math.sin(nightNo*91.7+seed*3.1)*43758.5453)%1<.34?1:0;
     if(camera){rainMat.uniforms.centre.value.copy(camera.position);rainMesh.visible=w.rain>.01;}
+    motes.update(elapsed,boat.x,boat.z,night*(1-w.rain));
     rainMat.uniforms.time.value=elapsed;rainMat.uniforms.windDir.value.set(-Math.sin(boat.wind.direction),-Math.cos(boat.wind.direction)).multiplyScalar(boat.wind.strength);
     rainbow.visible=rainbowLevel>.02;bowMat.uniforms.alpha.value=rainbowLevel;
     if(rainbow.visible){rainbow.position.set(boat.x+210*1.4,-60,boat.z+650*1.4);rainbow.lookAt(boat.x,-60,boat.z);}
@@ -150,6 +138,7 @@ export function createWorld(scene, { realDay = null } = {}) {
     if(Math.hypot(boat.x-42,boat.z+300)<80)discover('cove','고요한 만',{kind:'moment',title:'고요한 만',description:'두 곶이 감싼 얕은 물'});
     const day=Math.floor(clock/DAY);
     if(warm>.8&&elevation<0)discover(`sunset-${day}`,'바다 위의 노을',{kind:'moment',title:'바다 위의 노을',description:'수평선이 붉게 물들었어요'});
+    if(skyShared.aurora.value&&night>.9&&w.rain<.3)discover(`aurora-${nightNo}`,'오로라',{kind:'moment',title:'오로라',description:'북쪽 하늘에 빛의 커튼이 일렁여요'});
     if(night>.9)discover(`stars-${day}`,'별이 뜬 밤바다',{kind:'moment',title:'별이 뜬 밤바다',description:'물결이 푸르게 빛나요'});
     if(rainbowLevel>.6)discover(`rainbow-${Math.floor(clock/WEATHER_SLOT)}`,'무지개',{kind:'moment',title:'무지개',description:'비가 그친 뒤 하늘에 걸렸어요'});
     if(w.kind!==lastWeather){const say={rain:'빗방울이 떨어지기 시작해요',gust:'바람이 거세져요 — 돛이 팽팽해요',haze:'옅은 해무가 내려앉아요'}[w.kind];if(say)events.push({kind:'notice',text:say});lastWeather=w.kind;}
@@ -165,7 +154,8 @@ export function createWorld(scene, { realDay = null } = {}) {
     drain:()=>events.splice(0),
     state(){return {time:elapsed,clock,warm,night,weather,rainbow:rainbowLevel>.3,discoveries:discoveries.map(d=>({...d})),islands:islands.state(),life:life.state()};}};
 }
-const DAY=720,WEATHER_SLOT=200;
+// A day is an hour of the shared clock, the same sky for everyone: sunrise on the hour, noon at :15, sunset at :30.
+const DAY=3600,WEATHER_SLOT=200;
 const smooth=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
 function slotKind(n,seed){const h=Math.abs(Math.sin(n*12.9898+seed*7.1)*43758.5453)%1;return h<.4?'clear':h<.55?'breeze':h<.7?'gust':h<.88?'rain':'haze';}
 /** Weather from the (shared) clock: 200 s slots that ramp in and out, a rainbow after rain. */

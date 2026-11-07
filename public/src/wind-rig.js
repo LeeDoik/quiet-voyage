@@ -17,6 +17,11 @@ function subdivide(geometry, n) {
   return mergeVertices(result);
 }
 
+// A little masthead pennant, hoist at its origin, streaming aft (-X) at rest.
+const pennantGeometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute([0,.065,0,-.55,0,0,0,-.065,0],3));
+pennantGeometry.computeVertexNormals();
+const pennantMaterial=new THREE.MeshStandardMaterial({color:0xbf5f43,roughness:.8,side:THREE.DoubleSide});
+
 // GLB model coordinates: bow +X, up +Y. Keep each sail's luff attached.
 export function createWindRig(model){
   const sails=[];
@@ -30,6 +35,9 @@ export function createWindRig(model){
   });
   const boom=model.getObjectByName('boom');
   if(boom){boom.geometry=new THREE.CylinderGeometry(.045,.045,1.83,10);}
+  // Remote boats find the pennant cloned from the player's model.
+  let pennant=model.getObjectByName('pennant'),flap=0;
+  if(!pennant){pennant=new THREE.Mesh(pennantGeometry,pennantMaterial);pennant.name='pennant';pennant.userData.tag='boat-detail';pennant.position.set(.1,5.68,0);model.add(pennant);}
   let angle=0;
   const axis=new THREE.Vector3(0,1,0),direction=new THREE.Vector3();
   return {
@@ -56,6 +64,9 @@ export function createWindRig(model){
         boom.position.set(.08,1.3,0).addScaledVector(direction,1.83/2);
         boom.quaternion.setFromUnitVectors(axis,direction);
       }
+      // Streams downwind (the apparent wind's angle is also its heading here) and flaps faster as it freshens.
+      flap+=dt*(5+air.apparentSpeed);
+      pennant.rotation.set(Math.sin(flap*1.3)*.5,air.relativeAngle+Math.sin(flap)*.12,0,'YXZ');
       return angle;
     }
   };

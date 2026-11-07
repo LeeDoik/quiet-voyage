@@ -13,7 +13,7 @@ import { WORLD_RADIUS } from './world-gen.js';
 
 // Linear gains before the limiter, set by measuring the master output in headless Chrome:
 // ambience -35 dBFS RMS cruising, -32 under full sail; single cues peak at -20 to -32 dBFS.
-const LEVEL = { wash: .07, rush: .11, wind: .105, luff: .045, rain: .05, lap: .11, slap: .17, creak: .11, drop: .06, surf: .15, blow: .14, song: .031, gull: .06, whistle: .026, chime: .05, bloom: .028, motif: .04, cork: .057, paper: .1, page: .08 };
+const LEVEL = { wash: .07, rush: .11, wind: .105, luff: .045, rain: .05, lap: .11, slap: .17, creak: .11, drop: .06, surf: .15, blow: .14, song: .031, gull: .06, whistle: .026, chime: .05, motif: .04, cork: .057, paper: .1, page: .08 };
 const MAX_VOICES = 16;   // one-shot cues sounding at once; more are dropped
 
 let ctx = null, master = null, noise = null, bed = null, seed = 7, voices = 0, pause = 0, rainLevel = 0, motifAt = 0;
@@ -261,10 +261,6 @@ export const sfx = {
   },
   /** Light pulse (E): a small glass chime where the light spreads. */
   pulse(x, z) { const v = spot(LEVEL.chime, x, z, 150); if (v) glass(v, 1318.5, 2.2); },
-  /** Light trace (R): a lower chime where the light is left. */
-  trace(x, z) { const v = spot(LEVEL.chime, x, z, 150); if (v) glass(v, 493.9, 3.2); },
-  /** A trace blooms (yours, or someone's you sail through): a tiny chime with its notice. */
-  bloom() { const v = voice(LEVEL.bloom); if (v) glass(v, 1975.5, .9); },
   /** A first-ever island or creature: three soft notes, at most one motif every few seconds. */
   discover() {
     if (!live() || ctx.currentTime < motifAt) return;

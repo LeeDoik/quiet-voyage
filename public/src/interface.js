@@ -22,6 +22,7 @@ export function createInterface() {
   let greeted = false;
   let wasPlaying = false;
   let pressedAt = new Map(); // key code → play time of its first press, to fade its hint
+  let fullscreenBox = null;  // the corner badge as last drawn, for fullscreen.js to hit-test clicks
 
   const has = (keys, ...names) => names.some(name => keys.has(name));
   const pressed = (keys, ...names) => names.some(name => keys.has(name) && !previousKeys.has(name));
@@ -52,9 +53,11 @@ export function createInterface() {
     },
     /** Is the journal or the field guide open (touch hides the sailing buttons while it is)? */
     reading: () => journalOpen || guideOpen,
+    fullscreenBox: () => fullscreenBox,
     hud(state) {
       const h = window.__studio.hud;
       h.clear();
+      fullscreenBox = null;
       const view = state.view ?? { aspect: 16 / 9, k: 1 };
       const p = pen(h, view, state.world?.night ?? 0);
       const { A, K, px, em, lh } = p;
@@ -68,6 +71,7 @@ export function createInterface() {
 
       if (state.phase === 'menu') {
         drawTitle(p, touch);
+        if (state.fullscreen && !touch) fullscreenBox = drawFullscreen(p, state.fullscreen.on);
         return;
       }
       const boat = state.boat, log = state.log;
@@ -135,12 +139,18 @@ export function createInterface() {
         tag(p, 'quiet-mode', social.name && social.connected ? `${mode}  ·  ${social.name}` : mode, .02, .815, 11);
         // Key hints fade once their key is used, and all of them after the first few minutes.
         const seen = code => Math.max(0, Math.min(1, (HINT_TIME - elapsed) / 4, pressedAt.has(code) ? 1 - (elapsed - pressedAt.get(code)) / 2 : 1));
-        const keys = [...t('E  빛물결    R  빛의 흔적').split(/\s{3,}/), ...(social.canPractice ? [`H  ${t(social.practice ? '동행 연습 마치기' : '동행 연습')}`] : [])];
+        const keys = [t('E  빛물결'), t('T  자동 항해'), ...(social.canPractice ? [`H  ${t(social.practice ? '동행 연습 마치기' : '동행 연습')}`] : [])];
         keyTags(p, 'quiet-key', keys, .87, seen);
         keyTags(p, 'journal-key', `${t('J 노트   K 도감   B 편지   C 사진')}${platform.dev ? t('   P 성능   G 그래픽') : ''}`.trim().split(/\s{3,}/), .925, seen);
       } else if (social?.connected) {
         const peers = t('근처 배 {n}척', { n: social.peers });
         tag(p, 'quiet-mode', peers, .5 - p.widthOf(peers, 11) / 2 - 8 * px / A, below + 4 * px, 11);
+        below += em(11) + 14 * px;
+      }
+      const auto = boat?.autopilot;
+      if (auto?.on && !(touch && state.bottles?.picker)) {
+        const label = auto.target ? t('자동 항해 · {name}', { name: auto.target }) : t('자동 항해 · 먼바다');
+        tag(p, 'autopilot', label, .5 - p.widthOf(label, 11) / 2 - 8 * px / A, below + 4 * px, 11);
         below += em(11) + 14 * px;
       }
       if (social?.resonance > .1) {
@@ -169,7 +179,8 @@ export function createInterface() {
         if (message.includes('\n')) drawLetter(p, message, top, touch ? top + .2 : .86);
         else note(p, 'notice', message, top, 15);
       }
-      if (state.sound && !touch) drawSound(p, state.sound.muted);
+      if (state.fullscreen && !touch) fullscreenBox = drawFullscreen(p, state.fullscreen.on);
+      if (state.sound && !touch) drawSound(p, state.sound.muted, fullscreenBox ? fullscreenBox.x0 - 6 * px / A : .98);
       if (state.bottles?.picker && !touch) drawPicker(p, state.bottles.phrases);
       drawTouch(p, state);
     },
@@ -451,11 +462,24 @@ function speaker(p, id, cx, cy, size, muted) {
   p.h.path(`${id}-waves`, muted ? MUTE : WAVES, { x: x + size * .6 / A, y, w: size * .4, h: size, viewBox: '60 0 40 100', fill: null, stroke: muted ? p.stamp : rgba(INK, .85), width: 1.4 * px });
 }
 
-function drawSound(p, muted) {
-  const { A, px } = p, s = 16 * px, w = s / A + 30 * px / A, x = .98 - w, y = .022;
+function drawSound(p, muted, right = .98) {
+  const { A, px } = p, s = 16 * px, w = s / A + 30 * px / A, x = right - w, y = .022;
   p.sheet('sound', x, y, w, s + 8 * px, { radius: 2 * px });
   speaker(p, 'sound', x + 6 * px / A + s / 2 / A, y + 4 * px + s / 2, s, muted);
   p.write('sound-key', 'M', x + w - 8 * px / A, y + 4 * px + s / 2 - p.em(10) * .55, 10, p.soft, 'right');
+}
+
+// Four corners pointing out (enter fullscreen) or in (leave it).
+const FULL_IN = 'M14 14 H42 V24 H24 V42 H14 Z M86 14 V42 H76 V24 H58 V14 Z M14 86 V58 H24 V76 H42 V86 Z M86 86 H58 V76 H76 V58 H86 Z';
+const FULL_OUT = 'M32 14 H42 V42 H14 V32 H32 Z M58 14 H68 V32 H86 V42 H58 Z M14 58 H42 V86 H32 V68 H14 Z M58 58 H86 V68 H68 V86 H58 Z';
+
+/** The fullscreen badge in the top-right corner, like the sound badge; returns where it lies. */
+function drawFullscreen(p, on) {
+  const { A, px } = p, s = 16 * px, w = s / A + 30 * px / A, x = .98 - w, y = .022, h = s + 8 * px;
+  p.sheet('fullscreen', x, y, w, h, { radius: 2 * px });
+  p.icon('fullscreen-glyph', on ? FULL_OUT : FULL_IN, x + 6 * px / A + s / 2 / A, y + 4 * px + s / 2, s * .9, { fill: rgba(INK, .85) });
+  p.write('fullscreen-key', 'F', x + w - 8 * px / A, y + 4 * px + s / 2 - p.em(10) * .55, 10, p.soft, 'right');
+  return { x0: x, y0: y, x1: x + w, y1: y + h };
 }
 
 // ── the journal and the field guide ──
@@ -607,15 +631,17 @@ function drawTouch(p, state) {
   const { A } = p, buttons = state.touch?.buttons ?? [];
   const rows = buttons.filter(b => b.w);
   if (rows.length) drawLetterRows(p, rows, Math.max(0, ...buttons.filter(b => !b.w && b.y < .3).map(b => b.y + b.r)));
-  const small = buttons.filter(b => !b.w && !b.caption && b.id !== 'sound');
+  const small = buttons.filter(b => !b.w && !b.caption && b.id !== 'sound' && b.id !== 'fullscreen');
   const label = Math.min(12, ...small.map(b => 12 * 1.5 * b.r / A / p.widthOf(b.label, 12)));
   for (const b of buttons) {
     if (b.w || (b.id === 'sound' && !state.sound)) continue;
-    const id = `touch-${b.id}`, x = b.x - b.r / A, y = b.y - b.r;
-    p.sheet(id, x, y, 2 * b.r / A, 2 * b.r, { radius: b.r, lift: !b.pressed, press: b.pressed ? .16 : 0 });
+    const id = `touch-${b.id}`, x = b.x - b.r / A, y = b.y - b.r, down = b.pressed || (b.id === 'auto' && state.boat?.autopilot?.on);
+    p.sheet(id, x, y, 2 * b.r / A, 2 * b.r, { radius: b.r, lift: !down, press: down ? .16 : 0 });
     if (ARROWS[b.id]) {
       p.icon(`${id}-glyph`, ARROWS[b.id], b.x, b.y - b.r * (b.caption ? .2 : 0), b.r * .78, { fill: rgba(INK, .88) });
       if (b.caption) p.write(`${id}-caption`, b.caption, b.x, b.y + b.r * .34, Math.min(9, 9 * 1.3 * b.r / A / p.widthOf(b.caption, 9)), p.soft, 'center');
+    } else if (b.id === 'fullscreen') {
+      p.icon(`${id}-glyph`, state.fullscreen?.on ? FULL_OUT : FULL_IN, b.x, b.y, b.r * .8, { fill: rgba(INK, .85) });
     } else if (b.id === 'sound') {
       speaker(p, id, b.x, b.y, b.r * .9, state.sound.muted);
     } else {

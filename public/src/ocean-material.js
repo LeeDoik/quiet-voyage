@@ -6,12 +6,13 @@ export const SHORE_SLOTS = 6;
 /** Hulls the water reacts to: the player's boat first, then the nearest others. w = speed, -1 = empty. */
 export const VESSEL_SLOTS = 4;
 import { waveGLSL } from './wave-field.js';
+import { skyGLSL, skyShared } from './sky.js';
 
 export function createOceanMaterial() {
   return new THREE.ShaderMaterial({
     name: 'Ocean surface',
     uniforms: {
-      time: {value: 0}, warm: {value: 0},
+      time: {value: 0}, warm: {value: 0}, cover: skyShared.cover, skyLattice: skyShared.skyLattice,
       wind: {value: new THREE.Vector2(.65, 1)},
       vessels: {value: Array.from({length: VESSEL_SLOTS}, () => new THREE.Vector4(0, 0, 0, -1))},
       mist: {value: .00115},
@@ -34,7 +35,7 @@ export function createOceanMaterial() {
       }
     `,
     fragmentShader: `
-      uniform float time, warm, mist, night, rain;
+      uniform float time, warm, mist, night, rain, cover;
       uniform vec2 wind;
       uniform vec3 sunDir, moonDir;
       uniform vec4 vessels[4], shores[6], shoreShape[6];
@@ -42,6 +43,7 @@ export function createOceanMaterial() {
       varying vec3 vWorld;
       const float PI = 3.14159265;
       ${waveGLSL}
+      ${skyGLSL}
 
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float noise(vec2 p) {
@@ -49,14 +51,12 @@ export function createOceanMaterial() {
         return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+1.0), f.x), f.y);
       }
       vec3 linearColor(vec3 color) { return pow(color, vec3(2.2)); }
-      vec3 skyColor(vec3 direction) {
-        vec3 horizon = mix(mix(vec3(.74,.85,.80), vec3(1.0,.68,.48), warm), vec3(.07,.10,.17), night);
-        vec3 zenith = mix(mix(vec3(.31,.62,.72), vec3(.40,.43,.62), warm), vec3(.02,.03,.07), night);
-        horizon = mix(horizon, vec3(.55,.6,.62)*(1.-night*.8), rain*.6);
-        vec3 c = mix(horizon, zenith, smoothstep(-.03,.75,direction.y));
-        float toSun = max(0.0, dot(direction, sunDir));
-        c += mix(vec3(1.0,.9,.72), vec3(1.0,.55,.3), warm)*(pow(toSun,6.0)*.22+pow(toSun,48.0)*.45)*(1.0-night)*(1.0-rain*.75);
-        return linearColor(c);
+      // The sky the water mirrors (sky.js). Ripples blur the clouds, so two octaves do; and where the
+      // water mirrors little (looking down, close by) the clouds are skipped.
+      vec3 skyColor(vec3 direction, float fresnel) {
+        vec3 base = skyBase(direction);
+        vec4 cloud = fresnel > .04 ? skyClouds(direction, base, 2, false) : vec4(0.0);
+        return linearColor(mix(base, cloud.rgb, cloud.a*smoothstep(.04, .1, fresnel)));
       }
       // Rain: each ~0.9 m cell rings once per cycle, two offset layers so the drops never sync.
       vec2 rainRipple(vec2 p, float t) {
@@ -186,7 +186,7 @@ export function createOceanMaterial() {
         // Light through the thin top of a swell: a green-blue glow on crests seen against the sun.
         water += vec3(.0,.05,.045)*smoothstep(.1,.6,field.x)*pow(max(0.0,dot(viewDir,-sunDir)*.5+.5),2.0)*(1.0-night);
         water *= 1.0-night*.7;
-        vec3 color = mix(water,skyColor(reflection)*hull.x,fresnel);
+        vec3 color = mix(water,skyColor(reflection,fresnel)*hull.x,fresnel);
 
         // Dielectric microfacet sun glints, widened when the footprint grows.
         float roughness = .22+.11*smoothstep(.2,4.0,footprint);
@@ -203,6 +203,20 @@ export function createOceanMaterial() {
         float moonA2 = pow(roughness*1.25,4.0), moonD = mh*mh*(moonA2-1.0)+1.0;
         float moonGlint = moonA2/(PI*moonD*moonD)*sunFresnel/(4.0*nv);
         color += vec3(.62,.72,.9)*min(moonGlint,40.0)*.05*night*(1.0-rain*.85)*step(0.0,moonDir.y);
+        // The lanterns of the nearby hulls (lantern.js: port quarter, 1.7 m up) lay a warm pool on the
+        // water and a streak that shimmers toward the eye. Lit as lantern.js lights them.
+        float lamp = smoothstep(0.0,.35,night)*(1.0-.3*rain);
+        if (lamp > 0.0) {
+          for (int i=0; i<4; i++) {
+            vec4 v = vessels[i];
+            if (v.w < 0.0 || dot(p-v.xy,p-v.xy) > 3600.0) continue;
+            float c = cos(v.z), s = sin(v.z);
+            vec3 toLamp = vec3(v.x-.28*c+2.12*s, 1.7, v.y+.28*s+2.12*c)-vWorld;
+            float d2 = dot(toLamp,toLamp);
+            float glint = pow(max(dot(normal,normalize(viewDir+toLamp*inversesqrt(d2))),0.0),220.0);
+            color += linearColor(vec3(1.0,.72,.42))*lamp*(glint*1.1+.22/(1.0+d2*.9))*max(0.0,1.0-d2/3600.0);
+          }
+        }
 
         float foamNoise = noise(p*.8+vec2(time*.12,-time*.08));
         float beachWave = shore*.8+time*.78+noise(p*.13)*2.3;
@@ -216,8 +230,9 @@ export function createOceanMaterial() {
         float foam = clamp(beachFoam+crestFoam,0.0,.85);
         vec3 foamLight = linearColor(vec3(.86,.92,.89))*mix(1.0,.09,night)*(1.0-rain*.3);
         color = mix(color,foamLight,foam);
+        color += linearColor(vec3(.3,.8,1.))*beachFoam*night*(1.0-rain*.5)*.9;   // at night the breakers glow blue (bioluminescence)
         float haze = 1.0-exp(-pow(distanceToEye*mist*.85,2.0));
-        color = mix(color,skyColor(vec3(0,0,1)),haze);
+        color = mix(color,linearColor(skyBase(normalize(vec3(-viewDir.x,.02,-viewDir.z)))),haze);   // the horizon behind
         gl_FragColor = vec4(color,1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

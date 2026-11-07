@@ -441,6 +441,10 @@ function paint(overlay, items, state, deps, res) {
   if (surface.width !== width || surface.height !== height) {
     surface.width = width;
     surface.height = height;
+    // three.js allocates the GPU texture once, at its first size; a canvas that grows (fullscreen,
+    // a bigger window) no longer fits and every later upload fails, freezing the HUD. Disposing it
+    // makes the next render allocate a texture of the new size.
+    overlay.texture.dispose();
   }
   const g = surface.getContext("2d");
   g.clearRect(0, 0, width, height);

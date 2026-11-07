@@ -1,17 +1,21 @@
 import * as THREE from 'three';
-import { surface, env } from './sea.js';
+import { env } from './sea.js';
+import { waveGLSL } from './wave-field.js';
 
 // A boat's wake: a ribbon laid along the boat's real track, so it curves when the boat turns.
 // Two arms spread at the Kelvin angle (tan 19.5° ≈ .354) and a churned centre follows the stern.
 // One mesh, one draw call per boat; vertices ride the same wave field as the water. At night it glows.
-const TRAIL = 48, LIVE = 2, ROWS = TRAIL + LIVE, LIFE = 13;
+// The track is sampled by distance and by bend, so a turn is laid down as a fine curve, not a few chords.
+const TRAIL = 120, LIVE = 2, ROWS = TRAIL + LIVE, LIFE = 13, STEP = 1.2, BEND = .05;
 const SIDES = [-1, 1, 0];
+const turnOf = a => Math.atan2(Math.sin(a), Math.cos(a));
 
 const material = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, side: THREE.DoubleSide,
   uniforms: { time: { value: 0 }, night: env.night },
-  vertexShader: `attribute vec4 wake; attribute float along; varying vec4 vWake; varying float vAlong; varying vec2 vWorld;
-    void main(){ vWake=wake; vAlong=along; vWorld=position.xz; gl_Position=projectionMatrix*viewMatrix*vec4(position,1.); }`,
+  vertexShader: `${waveGLSL}
+    uniform float time; attribute vec4 wake; attribute float along; varying vec4 vWake; varying float vAlong; varying vec2 vWorld;
+    void main(){ vWake=wake; vAlong=along; vWorld=position.xz; vec3 p=position; p.y=waveField(p.xz,time).x+.05; gl_Position=projectionMatrix*viewMatrix*vec4(p,1.); }`,
   // wake: x = across (-1 inner .. 1 outer; centre ribbon: -1..1), y = age 0..1, z = strength, w = kind (0 arm, 1 centre)
   fragmentShader: `varying vec4 vWake; varying float vAlong; varying vec2 vWorld; uniform float time, night;
     float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
@@ -26,15 +30,16 @@ const material = new THREE.ShaderMaterial({
       // Thin white over the sea reads as a grey stain, so less foam means fewer patches, not fainter ones,
       // and around them the churned water is only paler and greener (bubbles under the surface).
       float amount=shape*edges*strength*(1.-age), cut=1.-.6*amount, w=max(fwidth(lace),.05);
-      float foam=smoothstep(cut-w,cut+w,lace)*min(1.,amount*4.), bubbles=amount*(.55+.45*lace)*.45*(1.-night*.8);
-      vec3 day=mix(vec3(.42,.74,.72),vec3(.93,.96,.95),foam), glow=vec3(.25,.85,1.);
-      gl_FragColor=vec4(mix(day,glow,night), max(foam*.9*mix(1.,.5+1.8*lace*lace,night), bubbles));   // at night: sparkling, not a sheet
+      float foam=smoothstep(cut-w,cut+w,lace)*min(1.,amount*4.), bubbles=amount*(.55+.45*lace)*.45*(1.-night*.5);
+      vec3 day=mix(vec3(.42,.74,.72),vec3(.93,.96,.95),foam), glow=vec3(.35,.82,.97);
+      gl_FragColor=vec4(mix(day,glow,night), max(foam*.9*mix(1.,.2+.55*lace*lace,night), bubbles));   // at night: a soft glow with sparkles, not paint
     }`,
 });
 
 export function createWake(scene) {
   const trail = [];                 // newest first: {x, z, yaw, speed, born}
   const position = new Float32Array(SIDES.length * ROWS * 2 * 3), data = new Float32Array(SIDES.length * ROWS * 2 * 4), alongs = new Float32Array(SIDES.length * ROWS * 2);
+  const bend = new Float32Array(ROWS), smooth = new Float32Array(ROWS);
   const index = [];
   for (let r = 0; r < SIDES.length; r++) for (let i = 0; i < ROWS - 1; i++) {
     const a = (r * ROWS + i) * 2, b = a + 2;
@@ -46,30 +51,51 @@ export function createWake(scene) {
   geometry.setAttribute('along', new THREE.BufferAttribute(alongs, 1).setUsage(THREE.DynamicDrawUsage));
   geometry.setIndex(index);
   const mesh = new THREE.Mesh(geometry, material); mesh.frustumCulled = false; mesh.userData.tag = 'wake'; scene.add(mesh);
-  let clock = 0;
   return {
     mesh,
     update(dt, x, z, yaw, speed, time) {
-      clock += dt; material.uniforms.time.value = time;
-      if (clock > .3 && speed > .6) { clock = 0; trail.unshift({ x, z, yaw, speed, born: time }); if (trail.length > TRAIL) trail.pop(); }
+      material.uniforms.time.value = time;
+      if (trail.length && time < trail[0].born) trail.length = 0;          // the sea clock jumped back
+      while (trail.length && time - trail[trail.length - 1].born > LIFE) trail.pop();
+      const last = trail[0], moved = last ? Math.hypot(x - last.x, z - last.z) : Infinity;
+      if (speed > .6 && (moved >= STEP || (moved >= .35 && Math.abs(turnOf(yaw - last.yaw)) >= BEND))) {
+        trail.unshift({ x, z, yaw, speed, born: time }); if (trail.length > TRAIL) trail.pop();
+      }
       // Two live rows, ahead of the bow and amidships, run the bow wave down the hull into the wake.
       // The first starts at zero strength so the ribbon fades in instead of ending in a straight edge.
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
       const rows = [{ x: x + fx * 3, z: z + fz * 3, yaw, speed, born: time, bow: .4, fade: 0 }, { x, z, yaw, speed, born: time, bow: 1.05, fade: 1 }, ...trail];
+      const count = rows.length;
+      // How sharply the track bends at each row (rad per metre; > 0 turning left), lightly smoothed.
+      for (let i = 0; i < count; i++) {
+        const a = rows[Math.max(0, i - 1)], b = rows[Math.min(count - 1, i + 1)];
+        bend[i] = turnOf(a.yaw - b.yaw) / Math.max(.5, Math.hypot(a.x - b.x, a.z - b.z));
+      }
+      for (let i = 0; i < count; i++) {
+        let sum = 0, weight = 0;
+        for (let j = -2; j <= 2; j++) { const k = i + j; if (k >= 0 && k < count) { const w = 3 - Math.abs(j); sum += bend[k] * w; weight += w; } }
+        smooth[i] = sum / weight;
+      }
       for (let r = 0; r < SIDES.length; r++) {
         const side = SIDES[r];
         for (let i = 0; i < ROWS; i++) {
-          const p = rows[Math.min(i, rows.length - 1)], age = Math.min(1, (time - p.born) / (side ? LIFE : LIFE * .45));
+          const j = Math.min(i, count - 1), p = rows[j], age = Math.min(1, (time - p.born) / (side ? LIFE : LIFE * .45));
           const behind = (time - p.born) * p.speed;                   // how far astern this water now lies
-          const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
+          const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw), k = smooth[j];
           const sx = p.x + Math.sin(p.yaw) * (p.bow ? 0 : 2.3), sz = p.z + Math.cos(p.yaw) * (p.bow ? 0 : 2.3);
           const centre = side ? side * (p.bow ?? (1.1 + behind * .354)) : 0;
           const half = side ? .5 + behind * .045 : .85 + behind * .035;
-          const strength = i >= rows.length ? 0 : Math.min(1, (p.speed - .6) / 4) * (side ? 1 : .8) * (p.fade ?? 1);
-          for (let k = 0; k < 2; k++) {
-            const across = k ? 1 : -1, off = centre + across * half, vx = sx + rx * off, vz = sz + rz * off;
-            const v = (r * ROWS + i) * 2 + k;
-            position[v * 3] = vx; position[v * 3 + 1] = surface(vx, vz, time) + .05; position[v * 3 + 2] = vz;
+          // The ribbon thins out over its last few rows, so a long turn never ends in a cut edge.
+          const tail = Math.min(1, (count - 1 - i) / 6);
+          const strength = i >= count ? 0 : Math.min(1, (p.speed - .6) / 4) * (side ? 1 : .8) * (p.fade ?? 1) * tail;
+          for (let e = 0; e < 2; e++) {
+            const across = e ? 1 : -1;
+            let off = centre + across * half;
+            // Inside a turn the spreading wake would reach past the turn's centre and fold over itself;
+            // there it is drawn in, smoothly, to stay short of the turning radius, so it bends cleanly.
+            if (off * k < 0) off /= 1 + Math.abs(off * k) * 1.5;
+            const v = (r * ROWS + i) * 2 + e;
+            position[v * 3] = sx + rx * off; position[v * 3 + 1] = 0; position[v * 3 + 2] = sz + rz * off;
             data.set([across * (side || 1), age, strength, side ? 0 : 1], v * 4);
             alongs[v] = behind + (p.bow ? -2.3 : 0);
           }
@@ -77,7 +103,7 @@ export function createWake(scene) {
       }
       geometry.attributes.position.needsUpdate = true; geometry.attributes.wake.needsUpdate = true; geometry.attributes.along.needsUpdate = true;
     },
-    clear() { trail.length = 0; clock = 0; },
+    clear() { trail.length = 0; },
     dispose() { scene.remove(mesh); geometry.dispose(); },
   };
 }

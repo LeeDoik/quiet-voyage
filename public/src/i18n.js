@@ -81,6 +81,8 @@ const en = {
   '수평선이 붉게 물들었어요': 'The horizon has turned red',
   '별이 뜬 밤바다': 'A Starlit Sea',
   '물결이 푸르게 빛나요': 'The waves are glowing blue',
+  '오로라': 'Aurora',
+  '북쪽 하늘에 빛의 커튼이 일렁여요': 'Curtains of light ripple across the northern sky',
   '비가 그친 뒤 하늘에 걸렸어요': 'Hanging in the sky after the rain',
   '빗방울이 떨어지기 시작해요': 'Rain is starting to fall',
   '바람이 거세져요 — 돛이 팽팽해요': 'The wind is rising — sails taut',
@@ -103,25 +105,27 @@ const en = {
   '동행 연습 · 로컬 배 1척': 'Practice · 1 local boat',
   '같은 바다 · 근처 배 {n}척': 'Shared sea · boats nearby: {n}',
   '혼자 흐르는 바다': 'Sailing alone',
-  'E  빛물결    R  빛의 흔적': 'E  Light ripple    R  Light trail',
+  'E  빛물결': 'E  Light ripple',
   '동행 연습 마치기': 'End practice',
   '동행 연습': 'Practice together',
   '근처 배 {n}척': 'Boats nearby: {n}',
   '같은 바람을 타고 있어요': 'Sailing the same wind',
   '나란히 흐르는 중': 'Drifting side by side',
   'J 노트   K 도감   B 편지   C 사진': 'J Log   K Guide   B Bottle   C Photo',
+  'T  자동 항해': 'T  Autopilot',
+  '자동 항해 · {name}': 'Autopilot · {name}',
+  '자동 항해 · 먼바다': 'Autopilot · open sea',
+  '자동 항해 · {name} 쪽으로 가요': 'Autopilot · heading for {name}',
+  '자동 항해를 시작해요': 'Autopilot on',
+  '키를 다시 잡았어요': 'You have the helm again',
   '   P 성능   G 그래픽': '   P Perf   G Graphics',
 
   // Touch buttons (labels sit inside a ~44 px circle: keep them short)
   '돌기': 'orbit', '왼쪽': 'left', '오른쪽': 'right', '가까이': 'closer', '빠르게': 'faster', '멀리': 'farther', '천천히': 'slower',
-  '저장': 'Save', '닫기': 'Close', '노트': 'Log', '도감': 'Guide', '빛': 'Glow', '흔적': 'Trail', '편지': 'Bottle', '사진': 'Photo', '동행': 'Duo', '소리': 'Sound',
+  '저장': 'Save', '닫기': 'Close', '노트': 'Log', '도감': 'Guide', '빛': 'Glow', '편지': 'Bottle', '사진': 'Photo', '동행': 'Duo', '소리': 'Sound', '자동': 'Auto', '전체': 'Full',
 
   // Light ripples and trails
-  '빛이 다시 모일 때까지 잠시 기다려요': 'Wait a moment for the light to gather',
-  '지나온 물길에 빛을 남겼어요': 'You left light in your wake',
   '물결에 작은 빛을 실었어요': 'You sent a little light across the water',
-  '누군가 남긴 빛이 피어났어요': 'Light someone left has bloomed',
-  '남겨 둔 빛에 다른 물결이 닿았어요': 'Another boat reached the light you left',
   '잠시 같은 바람을 타고 있어요': 'Sharing the same wind for a while',
 
   // Bottles: PHRASES travel as indices 0–7, only their display is translated

@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 globalThis.matchMedia = () => ({ matches: true });
 globalThis.window = globalThis;
 globalThis.addEventListener = () => {};
-globalThis.document = { body: { style: {} }, documentElement: { style: {} }, querySelector: () => null };
+globalThis.document = { body: { style: {} }, documentElement: { style: {} }, querySelector: () => null, fullscreenEnabled: true };
 const { createTouch } = await import('../public/src/touch.js');
 const phrases = Array.from({ length: 8 }, (_, i) => `phrase ${i}`);
 const NEED = {
-  play: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyE', 'KeyR'],
+  play: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyE', 'KeyT', 'KeyF'],
   photo: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'KeyC'],
-  book: ['KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH'],
+  book: ['KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyF'],
   picker: ['KeyB', 'KeyM', 'KeyC', ...phrases.map((_, i) => `Digit${i + 1}`)],
 };
 for (const [w, h] of [[360, 740], [390, 844], [844, 390], [1024, 768]]) {

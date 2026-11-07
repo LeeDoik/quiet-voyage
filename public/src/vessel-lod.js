@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createWindRig } from './wind-rig.js';
+import { createLantern } from './lantern.js';
 
 const cache=new WeakMap();
 function templateFor(source) {
@@ -8,6 +9,8 @@ function templateFor(source) {
   // Avoid caching an empty vessel while the GLB is still loading.
   if(!source.children.length) return null;
   const high=source.clone(true); high.position.set(0,0,0); high.rotation.set(0,0,0);
+  // The player's lantern came along in the clone; each vessel hangs its own (see createVesselLOD).
+  high.remove(...high.children.filter(o=>o.userData.tag==='lantern'));
   high.traverse(mesh=>{if(mesh.isMesh&&mesh.userData.dynamicSail)mesh.geometry=mesh.geometry.clone();});
   high.updateMatrixWorld(true);
   const groups=new Map();
@@ -35,6 +38,8 @@ export function createVesselLOD(source, tag='remote-boat') {
   const root=new THREE.Group();root.userData.tag=tag;
   const high=template.high.clone(true),low=template.low.clone(true);
   root.add(high,low);low.visible=false;
+  // Post and lantern only up close; the glow sits on the root so a distant boat is still a light.
+  const lantern=createLantern();high.add(lantern.body);root.add(lantern.glow);
   // Its own sails: a boat on the other tack fills them on the other side.
   root.vesselLOD={high,low,level:0,rig:createWindRig(high)};
   return root;

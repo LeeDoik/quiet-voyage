@@ -5,8 +5,9 @@
 import * as THREE from 'three';
 import { bakeTexture } from './materials.js';
 import { bottlesNear } from './world-gen.js';
-import { surface } from './sea.js';
+import { surface, env } from './sea.js';
 import { platform } from './platform.js';
+import { waveGLSL } from './wave-field.js';
 import { sfx } from './audio.js';
 import { t } from './i18n.js';
 
@@ -33,12 +34,51 @@ function bottleGeometry() {
   return g;
 }
 
+// A letter another sailor floated glows: a lit bottle, a halo over it and a warm pool on the water,
+// big enough to spot from afar (at least a few pixels at any distance) and breathing slowly.
+const glowMaterial = () => new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  uniforms: { time: { value: 0 }, scale: { value: 500 }, night: env.night },
+  vertexShader: `uniform float time, scale; attribute float phase; varying float vBreath;
+    void main(){ vBreath=.75+.25*sin(time*1.6+phase); vec4 mv=modelViewMatrix*vec4(position,1.); gl_Position=projectionMatrix*mv;
+      gl_PointSize=max(18., 3.6*vBreath*projectionMatrix[1][1]*scale/max(1.,-mv.z)); }`,
+  fragmentShader: `uniform float night; varying float vBreath;
+    void main(){ float d=length(gl_PointCoord-.5)*2.; float g=exp(-d*d*5.)*.7+exp(-d*d*40.)*.9;
+      gl_FragColor=vec4(vec3(1.,.8,.48)*g*vBreath*mix(1.3,1.6,night),1.); }`,
+});
+const poolMaterial = () => new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  uniforms: { time: { value: 0 }, night: env.night },
+  vertexShader: `${waveGLSL}
+    uniform float time; attribute float phase; varying vec2 vUv; varying float vBreath;
+    void main(){ vUv=uv*2.-1.; vBreath=.75+.25*sin(time*1.6+phase); vec4 w=instanceMatrix*vec4(position,1.); w.y=waveField(w.xz,time).x+.1; gl_Position=projectionMatrix*viewMatrix*w; }`,
+  fragmentShader: `uniform float time, night; varying vec2 vUv; varying float vBreath;
+    void main(){ float r=length(vUv); float ripple=.5+.5*sin(r*14.-time*2.2);
+      float g=exp(-r*r*5.)*(.7+.3*ripple)*(1.-smoothstep(.8,1.,r));
+      gl_FragColor=vec4(vec3(1.,.78,.45)*g*vBreath*mix(.55,.95,night),1.); }`,
+});
+
 export function createBottles(scene, { drop }) {
   const mesh = new THREE.InstancedMesh(bottleGeometry(), new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: .15, metalness: .1, transparent: true, opacity: .85,
     map: bakeTexture({ kind: 'metal', seed: 5, palette: [0xf2f6f2, 0xe2ebe4, 0xffffff], size: 128 }).map,
   }), CAP);
   mesh.count = 0; mesh.frustumCulled = false; mesh.userData.tag = 'bottle'; scene.add(mesh);
+  const lit = new THREE.InstancedMesh(mesh.geometry, new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: .2, emissive: 0xffc77a, emissiveIntensity: 1.6, transparent: true, opacity: .95,
+  }), CAP);
+  lit.count = 0; lit.frustumCulled = false; lit.userData.tag = 'bottle-lit'; scene.add(lit);
+  const haloGeometry = new THREE.BufferGeometry(), halo = new Float32Array(CAP * 3), phases = new Float32Array(CAP);
+  haloGeometry.setAttribute('position', new THREE.BufferAttribute(halo, 3).setUsage(THREE.DynamicDrawUsage));
+  haloGeometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1).setUsage(THREE.DynamicDrawUsage));
+  const halos = new THREE.Points(haloGeometry, glowMaterial()), buffer = new THREE.Vector2();
+  halos.frustumCulled = false; halos.renderOrder = 3; halos.userData.tag = 'bottle-glow'; scene.add(halos);
+  halos.onBeforeRender = renderer => { halos.material.uniforms.scale.value = renderer.getDrawingBufferSize(buffer).y / 2; };
+  const poolGeometry = new THREE.PlaneGeometry(1, 1, 8, 8).rotateX(-Math.PI / 2);
+  poolGeometry.setAttribute('phase', new THREE.InstancedBufferAttribute(phases, 1));
+  const pools = new THREE.InstancedMesh(poolGeometry, poolMaterial(), CAP);
+  pools.count = 0; pools.frustumCulled = false; pools.renderOrder = 2; pools.userData.tag = 'bottle-pool'; scene.add(pools);
+  const flat = new THREE.Quaternion(), pool = new THREE.Vector3(7, 1, 7);
   const found = new Set(JSON.parse(platform.read('sea.bottles') || '[]'));
   const near = [], events = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   let picker = false, previous = new Set();
@@ -56,10 +96,10 @@ export function createBottles(scene, { drop }) {
       }
       previous = new Set(input.keys);
       const list = bottlesNear(boat.x, boat.z, SHOW_RANGE, near).map(b => ({ id: b.id, x: b.x, z: b.z, text: t(LORE[b.line % LORE.length]), from: t('오래된 병') }));
-      for (const b of net) if (Math.hypot(b.x - boat.x, b.z - boat.z) < SHOW_RANGE) list.push({ id: b.id, x: b.x, z: b.z, text: t(PHRASES[b.p] ?? ''), from: t(b.name || '이름 없는 배') });
-      mesh.count = 0;
+      for (const b of net) if (Math.hypot(b.x - boat.x, b.z - boat.z) < SHOW_RANGE) list.push({ id: b.id, x: b.x, z: b.z, text: t(PHRASES[b.p] ?? ''), from: t(b.name || '이름 없는 배'), glow: true });
+      mesh.count = lit.count = pools.count = 0;
       for (const b of list) {
-        if (found.has(b.id) || mesh.count >= CAP) continue;
+        if (found.has(b.id) || (b.glow ? lit : mesh).count >= CAP) continue;
         const d = Math.hypot(b.x - boat.x, b.z - boat.z);
         if (playing && d < PICK_RANGE) {
           found.add(b.id); save(); sfx.paper();
@@ -68,13 +108,22 @@ export function createBottles(scene, { drop }) {
         }
         const phase = (b.x * 13 + b.z * 7) % 6.283;
         e.set(Math.sin(time * 1.3 + phase) * .25, phase + time * .05, Math.sin(time * .9 + phase) * .2);
-        p.set(b.x, surface(b.x, b.z, time) + .05, b.z);
-        mesh.setMatrixAt(mesh.count++, m.compose(p, q.setFromEuler(e), one));
+        const y = surface(b.x, b.z, time);
+        p.set(b.x, y + .05, b.z);
+        if (!b.glow) { mesh.setMatrixAt(mesh.count++, m.compose(p, q.setFromEuler(e), one)); continue; }
+        const i = lit.count++;
+        lit.setMatrixAt(i, m.compose(p, q.setFromEuler(e), one));
+        halo.set([b.x, y + .45, b.z], i * 3); phases[i] = phase;
+        p.y = y + .08; pools.setMatrixAt(i, m.compose(p, flat, pool));
       }
-      mesh.instanceMatrix.needsUpdate = true;
+      pools.count = lit.count; halos.geometry.setDrawRange(0, lit.count);
+      halos.material.uniforms.time.value = pools.material.uniforms.time.value = time;
+      mesh.instanceMatrix.needsUpdate = lit.instanceMatrix.needsUpdate = pools.instanceMatrix.needsUpdate = true;
+      haloGeometry.attributes.position.needsUpdate = haloGeometry.attributes.phase.needsUpdate = true;
+      poolGeometry.attributes.phase.needsUpdate = true;
     },
     drain: () => events.splice(0),
     reset() { picker = false; previous = new Set(); events.length = 0; },
-    state: () => ({ picker, phrases: picker ? PHRASES : null, visible: mesh.count }),
+    state: () => ({ picker, phrases: picker ? PHRASES : null, visible: mesh.count + lit.count, glowing: lit.count }),
   };
 }

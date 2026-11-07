@@ -52,14 +52,19 @@ export function createTouch(canvas) {
       at('fast', '▲', photo ? '가까이' : '빠르게', 'KeyW', w - pad - R, h - pad - R * 3.75, R),
       at('slow', '▼', photo ? '멀리' : '천천히', 'KeyS', w - pad - R, h - pad - R, R),
     );
-    // The top corners: the paper things on the left; photo, sound and practice on the right.
+    // The top corners: the paper things on the left; fullscreen, sound, photo and practice on the right.
     const left = photo ? [] : [['journal', '노트', 'KeyJ'], ['guide', '도감', 'KeyK'], ['bottle', '편지', 'KeyB']];
+    const full = document.fullscreenEnabled || document.webkitFullscreenEnabled ? [['fullscreen', '전체', 'KeyF']] : [];
     const right = photo ? [['shot', '저장', 'Space'], ['photo', '닫기', 'KeyC']] : [['sound', '소리', 'KeyM'], ['photo', '사진', 'KeyC'], ...(practice ? [['practice', '동행', 'KeyH']] : [])];
+    // Fullscreen takes the very corner; on a narrow phone, where the top row is full, it sits just under it.
+    const roomy = !photo && full.length && pad + r + (left.length - 1) * gap + 2.4 * r <= w - pad - r - right.length * gap;
+    if (roomy) right.unshift(...full);
+    else if (!photo) full.forEach(([id, label, code]) => list.push(at(id, label, '', code, w - pad - r, pad + r + gap, r)));
     left.forEach(([id, label, code], i) => list.push(at(id, label, '', code, pad + r + i * gap, pad + r, r)));
     right.forEach(([id, label, code], i) => list.push(at(id, label, '', code, w - pad - r - i * gap, pad + r, r)));
     // Greetings between the thumbs, where neither rests.
     const between = (pad + R * 4.35 + w - pad - 2 * R) / 2;
-    if (mode === 'play') [['pulse', '빛', 'KeyE'], ['trace', '흔적', 'KeyR']].forEach(([id, label, code], i) => list.push(at(id, label, '', code, between + (i - .5) * gap, h - pad - R, r)));
+    if (mode === 'play') [['pulse', '빛', 'KeyE'], ['auto', '자동', 'KeyT']].forEach(([id, label, code], i) => list.push(at(id, label, '', code, between + (i - .5) * gap, h - pad - R, r)));
     // Bottle phrases: the lines of a letter, between the top row and the bottom edge.
     const top = pad + 2 * r + Math.max(72, h * .1), step = Math.min(Math.max(40, h * .075), (h - pad - top) / phrases.length);
     if (mode === 'picker') phrases.forEach((text, i) => list.push({ id: `phrase-${i}`, label: `${i + 1}  ${t(text)}`, caption: '', code: `Digit${i + 1}`, x: w / 2, y: top + (i + .5) * step, radius: 0, w: Math.min(w * .86, 520), h: step * .9 }));
