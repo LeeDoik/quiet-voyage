@@ -12,7 +12,28 @@ function duration(seconds) {
 const km = metres => metres >= 1000 ? `${(metres / 1000).toFixed(metres >= 100000 ? 0 : 1)} km` : `${Math.round(metres)} m`;
 const knots = speed => (speed * 1.944).toFixed(1);
 
+// The first voyage teaches itself: one gentle line at a time, shown when it makes sense (a first
+// island before the log, a nearby boat before the light ripple, a golden sky before the camera) and
+// gone once its key is used, or after a while. What was learned is remembered on this browser.
+// [id, when it may show, the keys that complete it, desktop text, touch text]
+const TUTORIAL = [
+  ['sail', () => true, ['KeyW', 'ArrowUp'], 'W / ↑  바람을 타고 나아가기', '▲  바람을 타고 나아가기'],
+  ['turn', () => true, ['KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight'], 'A D / ← →  천천히 방향 바꾸기', '◀ ▶  천천히 방향 바꾸기'],
+  ['zoom', (s, t, touch) => !touch && t > 20, ['wheel'], '마우스 휠  가까이 · 멀리 보기', null],
+  ['log', s => (s.log?.voyage?.islands ?? 0) + (s.log?.voyage?.species ?? 0) > 0, ['KeyJ'], 'J  처음 본 것은 항해 노트에 적혀요', '노트  처음 본 것은 항해 노트에 적혀요'],
+  ['guide', s => (s.log?.voyage?.species ?? 0) > 0, ['KeyK'], 'K  만난 생물은 바다 도감에 그려져요', '도감  만난 생물은 바다 도감에 그려져요'],
+  ['auto', (s, t) => t > 90, ['KeyT'], 'T  자동 항해 — 방향 키를 잡으면 다시 내 손으로', '자동  자동 항해 — 방향을 잡으면 다시 내 손으로'],
+  ['greet', s => (s.social?.peers ?? 0) > 0 || s.social?.practice, ['KeyE'], 'E  가까운 배에 빛물결로 인사하기', '빛  가까운 배에 빛물결로 인사하기'],
+  ['bottle', (s, t) => t > 150, ['KeyB'], 'B  병에 편지를 담아 띄워 보세요', '편지  병에 편지를 담아 띄워 보세요'],
+  ['photo', (s, t) => (s.world?.warm ?? 0) > .4 || t > 300, ['KeyC'], 'C  하늘이 예쁠 때 사진으로 남겨 보세요', '사진  하늘이 예쁠 때 사진으로 남겨 보세요'],
+  ['settings', (s, t) => t > 240, ['KeyO'], 'O  소리마다 크기를 바꿀 수 있어요', '설정  소리마다 크기를 바꿀 수 있어요'],
+];
+const TIP_SHOW = 20, TIP_REST = 5;
+
 export function createInterface() {
+  const learned = new Set((() => { try { return JSON.parse(platform.read('sea.tutorial') || '[]'); } catch { return []; } })());
+  let tip = null, tipTime = 0, tipRest = 2;
+  const learn = id => { learned.add(id); if (platform.persist) platform.write('sea.tutorial', JSON.stringify([...learned])); };
   let elapsed = 0;
   let journalOpen = false;
   let guideOpen = false;
@@ -23,6 +44,7 @@ export function createInterface() {
   let wasPlaying = false;
   let pressedAt = new Map(); // key code → play time of its first press, to fade its hint
   let fullscreenBox = null;  // the corner badge as last drawn, for fullscreen.js to hit-test clicks
+  let settingsBoxes = null;  // the settings badge, panel and slider bars as last drawn (settings.js)
 
   const has = (keys, ...names) => names.some(name => keys.has(name));
   const pressed = (keys, ...names) => names.some(name => keys.has(name) && !previousKeys.has(name));
@@ -30,7 +52,7 @@ export function createInterface() {
   return {
     reset() {
       elapsed = 0; journalOpen = false; guideOpen = false; previousKeys = new Set();
-      moved = false; turned = false; greeted = false; wasPlaying = false; pressedAt = new Map();
+      moved = false; turned = false; greeted = false; wasPlaying = false; pressedAt = new Map(); tip = null; tipTime = 0; tipRest = 2;
     },
     update(dt, input, state) {
       const keys = input.keys;
@@ -44,6 +66,14 @@ export function createInterface() {
           if (has(keys, 'KeyA', 'a', 'KeyD', 'd', 'ArrowLeft', 'ArrowRight')) turned = true;
           if (has(keys, 'KeyE', 'e')) greeted = true;
           for (const key of keys) if (!pressedAt.has(key)) pressedAt.set(key, elapsed);
+          // The tutorial: finish the line on show when its key is used; pick the next after a rest.
+          const touch = !!state.touch?.active, used = code => code === 'wheel' ? !!input.wheel?.y : code === 'KeyO' ? !!state.settings?.open : keys.has(code);
+          for (const step of TUTORIAL) if (!learned.has(step[0]) && step[2].some(used)) { learn(step[0]); if (tip === step) { tip = null; tipRest = TIP_REST; } }
+          if (tip && (tipTime += dt) > TIP_SHOW) { learn(tip[0]); tip = null; tipRest = TIP_REST; }
+          if (!tip && (tipRest -= dt) <= 0) {
+            tip = TUTORIAL.find(step => !learned.has(step[0]) && (touch ? step[4] : step[3]) && step[1](state, elapsed, touch)) ?? null;
+            tipTime = 0;
+          }
         }
         wasPlaying = true;
       } else {
@@ -54,10 +84,11 @@ export function createInterface() {
     /** Is the journal or the field guide open (touch hides the sailing buttons while it is)? */
     reading: () => journalOpen || guideOpen,
     fullscreenBox: () => fullscreenBox,
+    settingsBoxes: () => settingsBoxes,
     hud(state) {
       const h = window.__studio.hud;
       h.clear();
-      fullscreenBox = null;
+      fullscreenBox = null; settingsBoxes = null;
       const view = state.view ?? { aspect: 16 / 9, k: 1 };
       const p = pen(h, view, state.world?.night ?? 0);
       const { A, K, px, em, lh } = p;
@@ -164,13 +195,10 @@ export function createInterface() {
       }
       // One prompt at a time, dismissed by the action it teaches or by time. On touch, prompts and
       // notices stack under the compass, clear of the boat and the thumbs.
-      let hint = '', until = 42;
-      if (elapsed < 15 && !moved) { hint = touch ? '▲  바람을 타고 나아가기' : 'W / ↑  바람을 타고 나아가기'; until = 15; }
-      else if (elapsed < 28 && !turned) { hint = touch ? '◀ ▶  천천히 방향 바꾸기' : 'A D / ← →  천천히 방향 바꾸기'; until = 28; }
-      else if (elapsed > 32 && elapsed < 42 && !greeted && social?.connected) hint = touch ? '빛  버튼으로 인사하기' : 'E  빛으로 인사하기';
+      const hint = tip ? (touch ? tip[4] : tip[3]) : '';
       const picking = touch && state.bottles?.picker; // the touch picker's letter takes the screen
-      if (hint && !picking) {
-        const bottom = note(p, 'hint', t(hint), touch ? below + 6 * px : .875, 14, Math.max(0, Math.min(1, elapsed / 1.5, (until - elapsed) / 2)));
+      if (hint && !picking && !state.bottles?.writing && !state.settings?.open) {
+        const bottom = note(p, 'hint', t(hint), touch ? below + 6 * px : .875, 14, Math.max(0, Math.min(1, tipTime / 1.2, (TIP_SHOW - tipTime) / 1.5)));
         if (touch) below = bottom;
       }
       const message = log?.notice || social?.notice;
@@ -180,8 +208,15 @@ export function createInterface() {
         else note(p, 'notice', message, top, 15);
       }
       if (state.fullscreen && !touch) fullscreenBox = drawFullscreen(p, state.fullscreen.on);
-      if (state.sound && !touch) drawSound(p, state.sound.muted, fullscreenBox ? fullscreenBox.x0 - 6 * px / A : .98);
+      let right = fullscreenBox ? fullscreenBox.x0 - 6 * px / A : .98;
+      if (state.sound && !touch) right = drawSound(p, state.sound.muted, right) - 6 * px / A;
+      if (state.settings) {
+        const badge = touch ? null : drawSettingsBadge(p, right);
+        const under = touch ? (row.length ? rowBottom : .03) : .022 + 24 * px + 6 * px;
+        settingsBoxes = { badge, ...(state.settings.open ? drawSettings(p, state.settings, under, touch) : {}) };
+      }
       if (state.bottles?.picker && !touch) drawPicker(p, state.bottles.phrases);
+      if (state.bottles?.writing) drawWriting(p, state.bottles.writing, touch);
       drawTouch(p, state);
     },
   };
@@ -199,6 +234,9 @@ const SERIF = lang === 'ko' ? '"QV Serif KO", AppleMyungjo, Batang, "Noto Serif 
 const HAND = `${lang === 'ko' ? '"QV Hand KO"' : '"QV Hand"'}, ${SERIF}`;
 // The pen faces draw small beside the serif. They hold only the text in tools/glyphs.mjs HAND.
 const HAND_SIZE = lang === 'ko' ? 1.32 : 1.2;
+// Letters sailors write can hold any character, past what the cut faces carry: a full system face.
+const LETTER = '"Nanum Myeongjo", AppleMyungjo, "Apple SD Gothic Neo", Batang, "Noto Serif KR", serif';
+const WRITTEN = '\u2063';   // bottles.js: marks a sailor's own words
 const FONTS = lang === 'ko' ? { 'QV Serif KO': 'qv-serif-ko', 'QV Hand KO': 'qv-hand-ko' } : { 'QV Serif': 'qv-serif', 'QV Symbols': 'qv-symbols', 'QV Hand': 'qv-hand' };
 let paper = null, paperScale = 0, meter = null;
 
@@ -423,14 +461,49 @@ const SEAL = 'M50 6 C62 4 70 12 80 14 C90 18 94 30 94 40 C98 52 92 62 90 72 C84 
 /** A found bottle: a letter card, the title in small serif and the phrase in handwriting. */
 function drawLetter(p, message, top, limit) {
   const { A, px, em, lh } = p, [title, ...rest] = message.split('\n'), pad = 18 * px / A;
-  const phrase = p.balance(rest.join(' '), 17 * HAND_SIZE, .92 - 2 * pad - 20 * px / A, HAND, 3);
-  const w = Math.min(.92, Math.max(p.widthOf(title, 11), p.widthOf(phrase.join('\n'), 17 * HAND_SIZE, HAND)) + 2 * pad + 20 * px / A);
-  const hh = 12 * px + lh(11) + em(17 * HAND_SIZE) * 1.25 * phrase.length + 14 * px, x = .5 - w / 2, y = Math.min(top, limit - hh);
+  const written = message.includes(WRITTEN), font = written ? LETTER : HAND, size = written ? 17 : 17 * HAND_SIZE;
+  const body = rest.join(' ').replaceAll(WRITTEN, ''), room = .92 - 2 * pad - 20 * px / A;
+  const phrase = written ? charWrap(p, body, size, room, font, 4) : p.balance(body, size, room, font, 3);
+  const w = Math.min(.92, Math.max(p.widthOf(title, 11), p.widthOf(phrase.join('\n'), size, font)) + 2 * pad + 20 * px / A);
+  const hh = 12 * px + lh(11) + em(size) * 1.25 * phrase.length + 14 * px, x = .5 - w / 2, y = Math.min(top, limit - hh);
   p.sheet('letter', x, y, w, hh, { radius: px });
   p.torn('letter-edge', x, y, w, hh, 'bottom');
   p.write('letter-title', p.fit(title, 11, w - 2 * pad - 20 * px / A), x + pad, y + 12 * px, 11, p.stamp);
-  p.hand('letter-phrase', phrase.join('\n'), .5, y + 12 * px + lh(11), 17, INK, 'center');
+  if (written) p.write('letter-phrase', phrase.join('\n'), .5, y + 12 * px + lh(11), size, INK, 'center', font);
+  else p.hand('letter-phrase', phrase.join('\n'), .5, y + 12 * px + lh(11), 17, INK, 'center');
   p.icon('letter-seal', SEAL, x + w - 14 * px / A, y + 2 * px, 22 * px, { fill: rgba(STAMP, .85) });
+}
+
+/** Text broken by character (Korean runs on without spaces), at most `most` lines. */
+function charWrap(p, value, size, width, font, most) {
+  const lines = [''];
+  for (const ch of Array.from(value)) {
+    const next = lines[lines.length - 1] + ch;
+    if (lines[lines.length - 1] && p.widthOf(next, size, font) > width) { if (lines.length === most) break; lines.push(ch.trimStart()); }
+    else lines[lines.length - 1] = next;
+  }
+  return lines;
+}
+
+/** Writing a letter: the words on a sheet of paper as they are typed, a caret, and what happens next. */
+function drawWriting(p, w, touch) {
+  const { A, px, em, lh } = p, pad = 22 * px / A, width = Math.min(.92, 560 * px / A), x = .5 - width / 2, top = touch ? .1 : .16;
+  const room = width - 2 * pad, size = 18, lines = charWrap(p, w.text + (w.caret && !w.pending ? '|' : ' '), size, room, LETTER, 4);
+  while (lines.length < 2) lines.push('');
+  const hh = 16 * px + lh(20 * HAND_SIZE) + lh(10) + 8 * px + lines.length * em(size) * 1.45 + lh(10) + (w.status ? lh(12) + 4 * px : 0) + 14 * px;
+  p.sheet('writing-panel', x, top, width, hh, { radius: px });
+  p.torn('writing-edge', x, top, width, hh, 'bottom');
+  let y = top + 16 * px;
+  p.hand('writing-title', t('편지 쓰기'), x + pad, y, 20); y += lh(20 * HAND_SIZE) - 6 * px;
+  p.write('writing-help', t(touch ? '띄우기 · 닫기 · 욕설·비방·연락처는 띄울 수 없어요' : 'Enter 띄우기 · Esc 닫기 · 욕설·비방·연락처는 띄울 수 없어요'), x + pad, y, 10, p.soft); y += lh(10) + 8 * px;
+  lines.forEach((line, i) => {
+    const ry = y + i * em(size) * 1.45;
+    p.box(`writing-rule-${i}`, x + pad * .6, ry + em(size) * 1.3, width - pad * 1.2, px, rgba(TEAL, .25));
+    p.write(`writing-line-${i}`, line, x + pad, ry, size, INK, 'left', LETTER);
+  });
+  y += lines.length * em(size) * 1.45 + 2 * px;
+  p.write('writing-count', `${Array.from(w.text).length} / ${w.max}`, x + width - pad, y, 10, p.soft, 'right');
+  if (w.status) p.write('writing-status', p.fit(w.status, 12, room), x + pad, y + lh(10), 12, p.stamp);
 }
 
 function drawPicker(p, phrases) {
@@ -467,6 +540,41 @@ function drawSound(p, muted, right = .98) {
   p.sheet('sound', x, y, w, s + 8 * px, { radius: 2 * px });
   speaker(p, 'sound', x + 6 * px / A + s / 2 / A, y + 4 * px + s / 2, s, muted);
   p.write('sound-key', 'M', x + w - 8 * px / A, y + 4 * px + s / 2 - p.em(10) * .55, 10, p.soft, 'right');
+  return x;
+}
+
+// Three sliders: the settings badge.
+const SLIDERS = 'M12 27 H88 V33 H12 Z M12 47 H88 V53 H12 Z M12 67 H88 V73 H12 Z M30 22 H44 V38 H30 Z M58 42 H72 V58 H58 Z M38 62 H52 V78 H38 Z';
+
+/** The settings badge left of the sound badge; returns its box. */
+function drawSettingsBadge(p, right) {
+  const { A, px } = p, s = 16 * px, w = s / A + 30 * px / A, x = right - w, y = .022, h = s + 8 * px;
+  p.sheet('settings', x, y, w, h, { radius: 2 * px });
+  p.icon('settings-glyph', SLIDERS, x + 6 * px / A + s / 2 / A, y + 4 * px + s / 2, s * .9, { fill: rgba(INK, .85) });
+  p.write('settings-key', 'O', x + w - 8 * px / A, y + 4 * px + s / 2 - p.em(10) * .55, 10, p.soft, 'right');
+  return { x0: x, y0: y, x1: x + w, y1: y + h };
+}
+
+/** The settings panel: a volume bar per kind of sound. Returns the panel and each bar's box. */
+function drawSettings(p, st, top, touch) {
+  const { A, px, em, lh } = p, pad = 16 * px / A, width = Math.min(.94, (touch ? 330 : 300) * px / A), x = .98 - width;
+  const rowH = (touch ? 40 : 30) * px, head = 14 * px + lh(18 * HAND_SIZE) + lh(10), hh = head + st.groups.length * rowH + 12 * px;
+  p.sheet('settings-panel', x, top, width, hh, { radius: px });
+  p.torn('settings-edge', x, top, width, hh, 'bottom');
+  p.hand('settings-title', t('환경설정'), x + pad, top + 12 * px, 18);
+  p.write('settings-help', t(touch ? '막대를 밀어 소리 크기 조절' : '↑ ↓ 고르기 · ← → 조절 · 끌어서 조절 · O 닫기'), x + pad, top + 12 * px + lh(18 * HAND_SIZE) - 6 * px, 10, p.soft);
+  const labelW = 96 * px / A, barX = x + pad + labelW, barW = width - 2 * pad - labelW - 40 * px / A, rows = [];
+  st.groups.forEach((g, i) => {
+    const y = top + head + i * rowH, v = st.volumes[g.key], mid = y + rowH / 2, chosen = i === st.row && !touch;
+    if (chosen) p.box(`settings-pick-${i}`, x + pad * .5, y + 2 * px, width - pad, rowH - 4 * px, rgba(STAMP, .1), 2 * px);
+    p.write(`settings-label-${i}`, t(g.label), x + pad, mid - em(12) * .6, 12, i === 0 ? INK : p.soft);
+    p.box(`settings-track-${i}`, barX, mid - 1.5 * px, barW, 3 * px, rgba(TEAL, .22), 2 * px);
+    p.box(`settings-fill-${i}`, barX, mid - 1.5 * px, barW * v, 3 * px, p.teal, 2 * px);
+    p.box(`settings-knob-${i}`, barX + barW * v - 5 * px / A, mid - 7 * px, 10 * px / A, 14 * px, chosen ? p.stamp : p.teal, 3 * px);
+    p.write(`settings-value-${i}`, `${Math.round(v * 100)}`, x + width - pad, mid - em(11) * .6, 11, p.soft, 'right');
+    rows.push({ key: g.key, x0: barX, x1: barX + barW, y0: y, y1: y + rowH });
+  });
+  return { panel: { x0: x, y0: top, x1: x + width, y1: top + hh }, rows };
 }
 
 // Four corners pointing out (enter fullscreen) or in (leave it).

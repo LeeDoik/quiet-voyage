@@ -13,6 +13,7 @@ const CONTRACT = new Set(['studio.js', 'hud.js']); // studio contract files: con
 const HAND = [
   '함께 흐르는 바다', '바람이 이끄는 곳으로, 천천히', '항해 노트', '바다 도감  {seen} / {total}', '병에 담을 말 고르기', '“”',
   '돌고래', '혹등고래', '범고래', '바다거북', '쥐가오리', '날치', '바닷새',
+  '편지 쓰기', '환경설정', '직접 쓰기', 'Write a letter', 'Settings', 'Write your own',
 ];
 
 const KEYWORDS = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
@@ -88,7 +89,8 @@ export function gameStrings() {
 
 export const ASCII = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('');
 const KOREAN = /[ᄀ-ᇿ㄰-㆏가-힯]/u;
-const set = (...texts) => [...new Set(texts.join(''))].filter(c => c >= ' ' && c !== '\u007f').sort().join('');
+// Invisible format characters (e.g. U+2063, bottles.js WRITTEN) are never drawn, so no font needs them.
+const set = (...texts) => [...new Set(texts.join(''))].filter(c => c >= ' ' && c !== '\u007f' && !/\p{Cf}/u.test(c)).sort().join('');
 
 // English text comes from i18n.js itself, read with the browser language forced to English.
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'en' }, configurable: true });

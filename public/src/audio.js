@@ -13,8 +13,24 @@ import { WORLD_RADIUS } from './world-gen.js';
 
 // Linear gains before the limiter, set by measuring the master output in headless Chrome:
 // ambience -35 dBFS RMS cruising, -32 under full sail; single cues peak at -20 to -32 dBFS.
-const LEVEL = { wash: .07, rush: .11, wind: .105, luff: .045, rain: .05, lap: .11, slap: .17, creak: .11, drop: .06, surf: .15, blow: .14, song: .031, gull: .06, whistle: .026, chime: .05, motif: .04, cork: .057, paper: .1, page: .08 };
+const BASE = { wash: .07, rush: .11, wind: .105, luff: .03, rain: .05, lap: .11, slap: .17, creak: .07, drop: .06, surf: .15, blow: .14, song: .031, gull: .06, whistle: .026, chime: .05, motif: .04, cork: .057, paper: .1, page: .08 };
 const MAX_VOICES = 16;   // one-shot cues sounding at once; more are dropped
+// The settings panel's sliders: one per kind of sound, and the whole (on the master gain). Every
+// cue and bed reads LEVEL when it plays or each frame, so a change is heard at once.
+export const SOUND_GROUPS = [
+  ['master', '전체 소리', []],
+  ['sea', '바다와 파도', ['wash', 'rush', 'lap', 'slap', 'surf']],
+  ['wind', '바람과 돛', ['wind', 'luff']],
+  ['boat', '배 삐걱임', ['creak']],
+  ['rain', '비', ['rain', 'drop']],
+  ['life', '바다 생물', ['blow', 'song', 'gull', 'whistle']],
+  ['ui', '빛·편지·노트', ['chime', 'motif', 'cork', 'paper', 'page']],
+];
+const volume = Object.fromEntries(SOUND_GROUPS.map(([key]) => [key, 1]));
+try { Object.assign(volume, Object.fromEntries(Object.entries(JSON.parse((typeof window === 'object' && platform.read('sea.volume')) || '{}')).filter(([k, v]) => k in volume && Number.isFinite(v)).map(([k, v]) => [k, Math.max(0, Math.min(1, v))]))); } catch { /* keep defaults */ }
+const LEVEL = { ...BASE };
+function levels() { for (const [key, , names] of SOUND_GROUPS) for (const name of names) LEVEL[name] = BASE[name] * volume[key]; }
+levels();
 
 let ctx = null, master = null, noise = null, bed = null, seed = 7, voices = 0, pause = 0, rainLevel = 0, motifAt = 0;
 let muted = typeof window === 'object' && platform.read('sea.sound') === 'off';   // node tests import this file
@@ -65,8 +81,9 @@ function build() {
   lfo(.13, [bed.wind.shape.gain, .28], [bed.wind.filter.frequency, 110]);
   lfo(.047, [bed.wind.shape.gain, .2]);
   // A luffing sail: noise chopped by a falling saw, each tooth a flap of cloth, at a wandering rate.
-  bed.flutter = lfo(7, [bed.luff.shape.gain, -1]); bed.flutter.type = 'sawtooth';
-  lfo(.37, [bed.flutter.frequency, 1.5]);
+  // Half depth: the cloth slats, it does not chop the sound to silence (that read as a rattle).
+  bed.flutter = lfo(3, [bed.luff.shape.gain, -.55]); bed.flutter.type = 'sawtooth';
+  lfo(.37, [bed.flutter.frequency, 1.1]); lfo(.13, [bed.flutter.frequency, .7]);
 }
 
 // Run the context only while it can be heard: mute or a hidden tab fades it out, then suspends it.
@@ -74,7 +91,7 @@ function apply() {
   if (!ctx) return;
   const on = audible();
   clearTimeout(pause);
-  master.gain.setTargetAtTime(on ? 1 : 0, ctx.currentTime, .05);
+  master.gain.setTargetAtTime(on ? volume.master : 0, ctx.currentTime, .05);
   if (on) ctx.resume().catch(() => {});
   else pause = setTimeout(() => ctx.suspend().catch(() => {}), 300);
 }
@@ -143,11 +160,15 @@ function slap(level) {
   hush(v, 'lowpass', 1200, 200, 1, .006, .3);
   hush(v, 'bandpass', 2600, 1000, 1.2, .01, .2, .3, .02);
 }
-// Hull and rigging working: a stick-slip buzz through a wooden resonance.
+// Hull and rigging working: a wooden creak. The stick-slip runs fast enough (70-120 a second) to be
+// heard as one groaning note through two wooden resonances, not as a rattle; at 24-40 a second it
+// was counted as separate knocks, a "du-du-du-duk" nobody could place.
 function creak(level) {
   const v = voice(LEVEL.creak * (.4 + .6 * level), (rand() - .5) * .5); if (!v) return;
-  const base = 24 + rand() * 16, len = .3 + rand() * .35;
-  tone(v, 'sawtooth', [[0, base, 0], [.06, base, 1], [len * .6, base * (1.25 + rand() * .3), .8], [len, base * 1.1, 0]], 'bandpass', 320 + rand() * 300, 4);
+  const base = 70 + rand() * 50, len = .35 + rand() * .4, bend = 1.12 + rand() * .2;
+  const path = [[0, base, 0], [.09, base, .8], [len * .55, base * bend, 1], [len, base * (bend - .08), 0]];
+  tone(v, 'sawtooth', path, 'bandpass', 520 + rand() * 200, 6);
+  tone(v, 'sawtooth', path.map(([t, hz, g]) => [t, hz, g * .45]), 'bandpass', 1250 + rand() * 300, 7);
 }
 // Rain on the deck: a tick somewhere around the boat.
 function drop() {
@@ -203,7 +224,7 @@ export const sfx = {
     const turn = vr > .004 ? 1 : vr < -.004 ? -1 : m.turn;
     if (turn !== m.turn) {
       const swing = Math.abs(s.roll - m.rollAt); m.rollAt = s.roll;
-      if (m.turn && now > m.creakAt && swing > .02 && rand() < .5) { creak(Math.min(1, swing / .1)); m.creakAt = now + 5 + rand() * 7; }
+      if (m.turn && now > m.creakAt && swing > .035 && rand() < .4) { creak(Math.min(1, swing / .1)); m.creakAt = now + 9 + rand() * 11; }
       m.turn = turn;
     }
     // Water rushing past the hull, surging as the bow pushes into a wave.
@@ -215,8 +236,8 @@ export const sfx = {
     b.wind.filter.frequency.setTargetAtTime(350 + 55 * Math.min(air, 14), now, .5);
     b.windPan.pan.setTargetAtTime(.35 * ((Math.cos(a) * fx + Math.sin(a) * fz) * ear.rx + (Math.cos(a) * fz - Math.sin(a) * fx) * ear.rz), now, .5);
     // The sail luffs when she points into the wind (the rig flutters there too).
-    b.luff.level.gain.setTargetAtTime(LEVEL.luff * smooth(.35, .16, s.sail.efficiency) * Math.min(1, air / 5), now, .3);
-    b.flutter.frequency.setTargetAtTime(4 + .6 * Math.min(air, 12), now, .5);
+    b.luff.level.gain.setTargetAtTime(LEVEL.luff * smooth(.24, .08, s.sail.efficiency) * Math.min(1, air / 5), now, .3);
+    b.flutter.frequency.setTargetAtTime(2.2 + .25 * Math.min(air, 12), now, .5);
     // The open sea, a little rougher in a strong wind.
     b.wash.level.gain.setTargetAtTime(LEVEL.wash * (.75 + .25 * Math.min(2, s.wind.strength)), now, 1.5);
     // Rain: a soft hiss over the water and the odd drop on the deck.
@@ -261,6 +282,11 @@ export const sfx = {
   },
   /** Light pulse (E): a small glass chime where the light spreads. */
   pulse(x, z) { const v = spot(LEVEL.chime, x, z, 150); if (v) glass(v, 1318.5, 2.2); },
+  /** An island answering a light pulse: a slow, rising arpeggio from the island itself. */
+  reply(x, z) {
+    const v = spot(LEVEL.motif * 1.4, x, z, 900); if (!v) return;
+    [392, 523.3, 659.3, 784].forEach((hz, i) => { ring(v, hz, 2.8, .8, .4 + i * .3); ring(v, hz * 2, 1.3, .14, .4 + i * .3); ring(v, hz * 3, .6, .05, .4 + i * .3); });
+  },
   /** A first-ever island or creature: three soft notes, at most one motif every few seconds. */
   discover() {
     if (!live() || ctx.currentTime < motifAt) return;
@@ -290,5 +316,13 @@ export const sfx = {
   },
   /** M: sound off or on, remembered on this browser. */
   toggleMute() { muted = !muted; platform.write('sea.sound', muted ? 'off' : 'on'); apply(); },
+  /** Settings: each group's volume, 0..1, remembered on this browser. */
+  volumes: () => ({ ...volume }),
+  setVolume(key, value) {
+    if (!(key in volume)) return;
+    volume[key] = Math.max(0, Math.min(1, Math.round(value * 20) / 20));
+    levels(); apply();
+    platform.write('sea.volume', JSON.stringify(volume));
+  },
   state: () => ({ muted }),
 };

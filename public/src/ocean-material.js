@@ -22,6 +22,8 @@ export function createOceanMaterial() {
       shores: {value: Array.from({length: SHORE_SLOTS}, () => new THREE.Vector4(0, 0, 0, 0))},
       shoreShape: {value: Array.from({length: SHORE_SLOTS}, () => new THREE.Vector4(0, 0, 0, 0))},
       cove: {value: new THREE.Vector3(coveSpec.x, coveSpec.z, coveSpec.scale)},
+      // Animals under the surface (undersea.js): closeness to the surface, and where the map lies (x, z, size, on).
+      lifeMap: {value: null}, lifeFrame: {value: new THREE.Vector4(0, 0, 128, 0)},
     },
     vertexShader: `
       uniform float time;
@@ -40,6 +42,8 @@ export function createOceanMaterial() {
       uniform vec3 sunDir, moonDir;
       uniform vec4 vessels[4], shores[6], shoreShape[6];
       uniform vec3 cove;
+      uniform sampler2D lifeMap;
+      uniform vec4 lifeFrame;
       varying vec3 vWorld;
       const float PI = 3.14159265;
       ${waveGLSL}
@@ -185,6 +189,20 @@ export function createOceanMaterial() {
         water *= .88+.12*clamp(field.x+.5,0.0,1.0);
         // Light through the thin top of a swell: a green-blue glow on crests seen against the sun.
         water += vec3(.0,.05,.045)*smoothstep(.1,.6,field.x)*pow(max(0.0,dot(viewDir,-sunDir)*.5+.5),2.0)*(1.0-night);
+        // An animal under the surface blocks the light coming up from below: a dark shape, softer and
+        // fainter the deeper it swims, bent by the ripples above it. Only the light from below is
+        // dimmed, so at a glancing look the mirrored sky hides it, as it does at sea.
+        if (lifeFrame.w > 0.0) {
+          vec2 luv = vec2(.5+(p.x-lifeFrame.x)/lifeFrame.z, .5-(p.y-lifeFrame.y)/lifeFrame.z)+normal.xz*.006;
+          float edge = smoothstep(.5,.4,max(abs(luv.x-.5),abs(luv.y-.5)));
+          if (edge > 0.0) {
+            float near = texture2D(lifeMap,luv).r, spread = (1.0-near)*.006+.002;
+            float soft = (texture2D(lifeMap,luv+vec2(spread,0.0)).r+texture2D(lifeMap,luv-vec2(spread,0.0)).r
+                         +texture2D(lifeMap,luv+vec2(0.0,spread)).r+texture2D(lifeMap,luv-vec2(0.0,spread)).r)*.25;
+            float body = mix(soft,near,.4);
+            water = mix(water,water*vec3(.34,.5,.56),.62*pow(body,2.5)*edge);
+          }
+        }
         water *= 1.0-night*.7;
         vec3 color = mix(water,skyColor(reflection,fresnel)*hull.x,fresnel);
 
@@ -225,7 +243,18 @@ export function createOceanMaterial() {
         vec2 streakUV = vec2(dot(p,along)*.28, dot(p,across)*1.15);
         float streak = noise(streakUV+vec2(time*.35,0.0))*.6+noise(streakUV*2.7-vec2(time*.2,0.0))*.4;
         float windy = smoothstep(1.0,1.5,wind.y);
-        float crestFoam = smoothstep(.62-.25*windy,.95,field.x+(streak-.5)*.35)*smoothstep(.48,.78,streak)*(.12+.3*windy);
+        // Whitecaps only in a real wind. A crest runs at 6-9 m/s, so foam tied to the crest itself slid
+        // across the water as fast white smudges; instead a crest leaves foam where it broke, which stays
+        // on the water (drifting with the streaks) and fades over about two seconds.
+        float crestFoam = 0.0;
+        if (windy > .01) {
+          for (int k=0; k<4; k++) {
+            float age = float(k)*.5;
+            float crest = smoothstep(.62-.25*windy,.95,waveField(p,time-age).x+(streak-.5)*.35);
+            crestFoam = max(crestFoam, crest*(1.0-age/2.0));
+          }
+          crestFoam *= smoothstep(.48,.78,streak)*.3*windy;
+        }
         crestFoam *= 1.0-.5*smoothstep(.4,3.0,footprint);
         float foam = clamp(beachFoam+crestFoam,0.0,.85);
         vec3 foamLight = linearColor(vec3(.86,.92,.89))*mix(1.0,.09,night)*(1.0-rain*.3);

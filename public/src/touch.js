@@ -45,6 +45,11 @@ export function createTouch(canvas) {
     const R = Math.max(30, m * .085), r = Math.max(22, m * .052), pad = m * .045, gap = r * 2.4;
     const at = (id, label, caption, code, x, y, radius) => ({ id, label: t(label), caption: t(caption), code, x, y, radius });
     const photo = mode === 'photo', list = [];
+    // Writing a letter: the phone's keyboard takes the lower screen, so two tokens sit under the letter.
+    if (mode === 'writing') {
+      list.push(at('send', '띄우기', '', 'Enter', w / 2 - gap * .7, Math.min(h * .5, pad + r + h * .36), r), at('close', '닫기', '', 'Escape', w / 2 + gap * .7, Math.min(h * .5, pad + r + h * .36), r));
+      buttons = list; return;
+    }
     // Sailing buttons rest while a book or the bottle picker is open; the token that opened it closes it.
     if (photo || mode === 'play') list.push(
       at('left', '◀', photo ? '돌기' : '왼쪽', 'KeyA', pad + R, h - pad - R, R),
@@ -54,12 +59,12 @@ export function createTouch(canvas) {
     );
     // The top corners: the paper things on the left; fullscreen, sound, photo and practice on the right.
     const left = photo ? [] : [['journal', '노트', 'KeyJ'], ['guide', '도감', 'KeyK'], ['bottle', '편지', 'KeyB']];
-    const full = document.fullscreenEnabled || document.webkitFullscreenEnabled ? [['fullscreen', '전체', 'KeyF']] : [];
+    const full = [...(document.fullscreenEnabled || document.webkitFullscreenEnabled ? [['fullscreen', '전체', 'KeyF']] : []), ['settings', '설정', 'KeyO']];
     const right = photo ? [['shot', '저장', 'Space'], ['photo', '닫기', 'KeyC']] : [['sound', '소리', 'KeyM'], ['photo', '사진', 'KeyC'], ...(practice ? [['practice', '동행', 'KeyH']] : [])];
     // Fullscreen takes the very corner; on a narrow phone, where the top row is full, it sits just under it.
     const roomy = !photo && full.length && pad + r + (left.length - 1) * gap + 2.4 * r <= w - pad - r - right.length * gap;
     if (roomy) right.unshift(...full);
-    else if (!photo) full.forEach(([id, label, code]) => list.push(at(id, label, '', code, w - pad - r, pad + r + gap, r)));
+    else if (!photo) full.forEach(([id, label, code], i) => list.push(at(id, label, '', code, w - pad - r - i * gap, pad + r + gap, r)));
     left.forEach(([id, label, code], i) => list.push(at(id, label, '', code, pad + r + i * gap, pad + r, r)));
     right.forEach(([id, label, code], i) => list.push(at(id, label, '', code, w - pad - r - i * gap, pad + r, r)));
     // Greetings between the thumbs, where neither rests.

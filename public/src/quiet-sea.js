@@ -12,11 +12,12 @@ export function readQuiet(packet){
 export function createQuietSea(){
   let time=0,sequence=0,pulseReady=0,lastNotice=0,notice='';
   let ownPulse=null,localId='self';
-  const pulses=new Map(),seen=new Map(),pairs=new Map();
+  const pulses=new Map(),seen=new Map(),pairs=new Map(),fresh=[];   // fresh: pulses not yet handed on (islands answer them)
   const say=text=>{notice=text;lastNotice=time+4;};
   function addPulse(owner,event){
     if(pulses.size>=16)pulses.delete(pulses.keys().next().value);
     pulses.set(owner,{...event,expires:time+PULSE_LIFE-event.age});
+    if(fresh.length<16)fresh.push({x:event.x,z:event.z,own:owner===localId});
   }
   return {
     act(kind,boat){
@@ -52,8 +53,10 @@ export function createQuietSea(){
     // The age goes out in whole seconds: sea-net.js sends the packet whenever it changes, and an age that
     // changed every frame doubled the message rate into the server's limit (and a disconnect) per pulse.
     packet(){return {v:1,pulse:ownPulse&&time-ownPulse.born<PULSE_LIFE?{seq:ownPulse.seq,x:ownPulse.x,z:ownPulse.z,age:Math.floor(time-ownPulse.born)}:null};},
+    /** Pulses seen since the last call (own and other boats'), each once. */
+    drain(){return fresh.splice(0);},
     visual(){return {time,pulses:[...pulses.values()],pairs:[...pairs.values()].filter(p=>p.charge>.1).sort((a,b)=>b.charge-a.charge).slice(0,4)};},
     state(){return {companions:[...pairs.values()].filter(p=>p.charge>.95).length,resonance:Math.max(0,...[...pairs.values()].map(p=>p.charge)),pulseReadyIn:Math.max(0,pulseReady-time),notice:time<lastNotice?notice:''};},
-    reset({keepSequence=false}={}){if(!keepSequence)sequence=0;time=pulseReady=lastNotice=0;notice='';ownPulse=null;localId='self';pulses.clear();seen.clear();pairs.clear();}
+    reset({keepSequence=false}={}){if(!keepSequence)sequence=0;time=pulseReady=lastNotice=0;notice='';ownPulse=null;localId='self';pulses.clear();seen.clear();pairs.clear();fresh.length=0;}
   };
 }

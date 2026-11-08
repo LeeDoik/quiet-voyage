@@ -8,10 +8,11 @@ globalThis.document = { body: { style: {} }, documentElement: { style: {} }, que
 const { createTouch } = await import('../public/src/touch.js');
 const phrases = Array.from({ length: 8 }, (_, i) => `phrase ${i}`);
 const NEED = {
-  play: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyE', 'KeyT', 'KeyF'],
+  play: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyE', 'KeyT', 'KeyF', 'KeyO'],
   photo: ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'KeyC'],
   book: ['KeyJ', 'KeyK', 'KeyB', 'KeyM', 'KeyC', 'KeyH', 'KeyF'],
   picker: ['KeyB', 'KeyM', 'KeyC', ...phrases.map((_, i) => `Digit${i + 1}`)],
+  writing: ['Enter', 'Escape'],
 };
 for (const [w, h] of [[360, 740], [390, 844], [844, 390], [1024, 768]]) {
   Object.assign(globalThis, { innerWidth: w, innerHeight: h });

@@ -13,7 +13,7 @@ import { SHORE_SLOTS } from './ocean-material.js';
 import { createSky, skyShared } from './sky.js';
 import { createMotes } from './motes.js';
 
-export function createWorld(scene) {
+export function createWorld(scene, renderer = null) {
   scene.background = new THREE.Color(0xb9d9d7);
   scene.fog = new THREE.FogExp2(0xb9d9d7, 0.00115);
   const hemi = new THREE.HemisphereLight(0xeaf6ed, 0x416e73, 2.0); scene.add(hemi);
@@ -46,7 +46,7 @@ export function createWorld(scene) {
   function tree(group,x,z,scale,y=6){const t=makeTree({height:7*scale,spread:3*scale,seed:Math.round((x+100)*3+(z+100)*7),kind:'needle'});t.position.set(x,y,z);group.add(t);}
   // Home islands and the open sea beyond are streamed by islands.js; the cove stays hand-built.
   const islands=createIslands(scene);
-  const life=createMarineLife(scene), motes=createMotes(scene);
+  const life=createMarineLife(scene,{renderer,water:waterMat.uniforms}), motes=createMotes(scene);
   // Two projecting headlands curl around a continuous, shallow inner beach.
   const cove=new THREE.Group();cove.position.set(118,0,-320);cove.scale.setScalar(.76);cove.userData.tag='cove';scene.add(cove);
   const coveMat=(kind,seed,palette,scale)=>triplanar(new THREE.MeshStandardMaterial({roughness:1,side:THREE.DoubleSide,map:bake({kind,seed,palette,size:256}).map}),{scale});
@@ -148,7 +148,9 @@ export function createWorld(scene) {
   reset();
   /** Other hulls the water should part around (nearest first, beyond the player's own). */
   function vessels(list){const slots=waterMat.uniforms.vessels.value;for(let i=1;i<slots.length;i++){const v=list[i-1];if(v)slots[i].set(v.x,v.z,v.yaw,v.speed);else slots[i].set(0,0,0,-1);}}
-  return {reset,update,vessels,
+  /** A light pulse (own or another boat's): the island near it answers. Returns {spec} or null. */
+  function respond(p){const spec=islands.respond(p.x,p.z,clock);if(!spec)return null;sfx.reply(spec.x,spec.z);return {spec,own:p.own};}
+  return {reset,update,vessels,life,respond,
     prepare:(camera,frustum,boat,optimized)=>{water.prepare(camera,frustum,boat,optimized);islands.prepare(camera,frustum);},
     renderState:()=>water.state(),
     drain:()=>events.splice(0),

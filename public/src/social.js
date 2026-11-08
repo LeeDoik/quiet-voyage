@@ -12,7 +12,8 @@ import { lang, t } from './i18n.js';
 const validPose=s=>s&&[s.x,s.y,s.z].every(v=>Number.isFinite(v)&&Math.abs(v)<1e6)&&Array.isArray(s.q)&&s.q.length===4&&s.q.every(Number.isFinite)&&Math.hypot(...s.q)>.5&&Math.hypot(...s.q)<1.5;
 // Multiplayer goes to our own sea server (server/worker.js); without one the sea is solo.
 const webNet=platform.web&&!!platform.server;
-const MAX_REMOTE=64,LABEL_RANGE=180,WAKES=4;
+// Other boats carry no name tag: on a quiet sea a sail is enough.
+const MAX_REMOTE=64,WAKES=4;
 // [Korean, English] pairs: one pick, so a name means the same thing in both. English stays ≤16 chars ("the " + 6 + " " + 5).
 const NAME_FIRST=[['푸른','Blue'],['고요한','Still'],['은빛','Silver'],['작은','Little'],['먼','Far'],['바람의','Windy'],['노을빛','Rosy'],['새벽','Dawn'],['달빛','Moon'],['하얀','White'],['잔잔한','Calm'],['소금빛','Salt'],['별빛','Bright'],['따뜻한','Warm'],['느린','Slow'],['맑은','Clear']];
 const NAME_SECOND=[['물새','Tern'],['고래','Whale'],['돛','Sail'],['파도','Wave'],['별','Star'],['등대','Light'],['갈매기','Gull'],['산호','Coral'],['물결','Swell'],['바람','Wind'],['섬','Isle'],['구름','Cloud'],['해초','Kelp'],['조개','Shell'],['수평선','Tide'],['나침반','North']];
@@ -25,19 +26,6 @@ function boatName(){
   platform.write('sea.name',name);
   return name;
 }
-function makeLabel(text){
-  const canvas=document.createElement('canvas'),g=canvas.getContext('2d'),font='600 44px ui-sans-serif, system-ui, sans-serif';
-  g.font=font;const width=Math.ceil(g.measureText(text).width)+48;
-  canvas.width=width;canvas.height=72;
-  g.font=font;g.textAlign='center';g.textBaseline='middle';
-  g.fillStyle='rgba(12,34,38,0.55)';g.beginPath();g.roundRect?.(0,6,width,60,30);g.fill();
-  g.fillStyle='#fff8e6';g.fillText(text,width/2,37);
-  const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
-  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthWrite:false,fog:false}));
-  sprite.userData.tag='boat-name';sprite.userData.aspect=width/72;sprite.userData.text=text;sprite.renderOrder=2;
-  return sprite;
-}
-function disposeLabel(sprite){sprite.material.map?.dispose();sprite.material.dispose();}
 export function createSocial(scene) {
   const boats=new Map(),quiet=createQuietSea(),water=createQuietWater(scene);
   const rotation=new THREE.Quaternion(),axis=new THREE.Vector3(0,1,0),euler=new THREE.Euler(0,0,0,'YXZ');
@@ -49,6 +37,7 @@ export function createSocial(scene) {
   // The nearest few boats leave a wake and part the water (ocean-material.js vessel slots).
   const wakes=Array.from({length:WAKES},()=>({wake:createWake(scene),id:null}));
   let nearest=[];
+  const bottleResults=[];   // the server's answers to our bottles: {ok, reason}
   function wakeFor(id){
     let slot=wakes.find(w=>w.id===id);
     if(!slot){slot=wakes.find(w=>w.id===null);if(!slot)return null;slot.id=id;slot.wake.clear();}
@@ -63,16 +52,7 @@ export function createSocial(scene) {
   }
   for(const w of wakes)w.wake.mesh.visible=false;
   function makeBoat(tag){const source=scene.children.find(o=>o.userData.tag==='boat');const mesh=source&&createVesselLOD(source,tag);if(mesh)scene.add(mesh);return mesh;}
-  function setLabel(boat,name){
-    // The server sends '' for a boat without a name (older servers sent '이름 없는 배'; t() maps that too).
-    const text=Array.from(t((typeof name==='string'&&name.trim())||'이름 없는 배')).slice(0,16).join('');
-    const current=boat.userData.label;
-    if(current?.userData.text===text)return;
-    if(current){boat.remove(current);disposeLabel(current);boat.userData.label=null;}
-    if(!text)return;
-    const label=makeLabel(text);label.position.set(0,10.5,0);boat.add(label);boat.userData.label=label;
-  }
-  function removeBoat(id){const boat=boats.get(id);if(boat){scene.remove(boat);if(boat.userData.label)disposeLabel(boat.userData.label);}boats.delete(id);}
+  function removeBoat(id){const boat=boats.get(id);if(boat)scene.remove(boat);boats.delete(id);}
   function clearBoats(){for(const id of boats.keys())removeBoat(id);releaseWakes(new Set());nearest=[];}
   function endPractice(){practice=false;practiceTime=0;practicePulseAt=3;practiceQuiet.reset();if(practiceBoat)scene.remove(practiceBoat);practiceBoat=null;}
   function watch(live){
@@ -85,6 +65,7 @@ export function createSocial(scene) {
       retry=code===4409||code===4401?Infinity:15;
     });
     live.on('leave',id=>removeBoat(id));
+    live.on('bottle',r=>{if(room===live&&bottleResults.length<8)bottleResults.push(r);});
   }
   async function join(boat){
     if(joining||room||practice)return;
@@ -133,7 +114,6 @@ export function createSocial(scene) {
         if(!remote){remote=makeBoat('remote-boat');if(remote)boats.set(id,remote);}
         if(remote){
           if(platform.web)float(remote,dt,pose,seaTime);else{remote.position.set(state.x,state.y,state.z);remote.quaternion.fromArray(state.q).normalize();}
-          setLabel(remote,player.name);
         }
         peers.push({...pose,raw:peerPose(id,raw),quiet:raw.quiet});
       }
@@ -160,18 +140,13 @@ export function createSocial(scene) {
     }
   }
   return {
+    /** Light pulses (own and other boats') since the last call: islands near them answer. */
+    pulses:()=>quiet.drain(),
     reset(){generation++;if(room)room.leave();room=null;joining=false;connected=false;clearBoats();endPractice();quiet.reset();water.clear();sendClock=0;retry=0;previous.clear();},
     update,
     prepare(camera,frustum,optimized){
       for(const boat of boats.values()){
         prepareVessel(boat,camera,frustum,optimized);
-        const label=boat.userData.label;
-        if(label){
-          const d=camera.position.distanceTo(boat.position);
-          label.visible=boat.visible&&d<LABEL_RANGE;
-          // Grows with distance so the name keeps a readable size on screen.
-          const h=Math.min(5,Math.max(1.1,d*.035));label.scale.set(h*label.userData.aspect,h,1);
-        }
       }
       if(practiceBoat)prepareVessel(practiceBoat,camera,frustum,optimized);
     },
@@ -181,6 +156,7 @@ export function createSocial(scene) {
     /** Bottles other sailors floated nearby (web only), minus our own. */
     bottles(){return room?.bottles?room.bottles().filter(b=>b.by!==sessionId):[];},
     dropBottle(p){return !!(connected&&room?.dropBottle?.(p));},
+    bottleResults(){return bottleResults.splice(0);},
     state(){return {connected,peers:boats.size,practice,canPractice:canPractice(),name:ownName,availability:webNet?(connected?'online':joining?'connecting':'offline'):'no-server',...quiet.state()};}
   };
 }

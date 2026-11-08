@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs && node tests/dolphin-ride.mjs && node tests/boat-float.mjs && node tests/fonts.mjs && node tests/touch-layout.mjs"
+    "models": "blender -b -P tools/blender/marine_life.py -- --render",
+    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs && node tests/dolphin-ride.mjs && node tests/boat-float.mjs && node tests/fonts.mjs && node tests/touch-layout.mjs && node tests/moderate.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

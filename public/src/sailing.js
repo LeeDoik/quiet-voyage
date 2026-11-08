@@ -27,6 +27,8 @@ export function createSailing(scene, camera) {
   });
 
   let sim, pitch=0, roll=0, height=0, surfaceHeight=0, idleTime=0;
+  // Mouse-wheel zoom: how far the chase camera sits, eased toward the wheel's aim. 1 = the usual view.
+  let zoom=1, zoomAim=1;
   const desired = new THREE.Vector3(), target = new THREE.Vector3();
   const wake = createWake(scene), float = createFloat(), autopilot = createAutopilot();
   function reset() {
@@ -49,7 +51,11 @@ export function createSailing(scene, camera) {
     lantern.update(dt,t,boat);
     wake.update(dt,x,z,yaw,speed,t);
     // Low enough that the horizon sits a third of the way down: the sky is half the picture of a voyage.
-    desired.set(x+Math.sin(yaw)*14,6+height*.2,z+Math.cos(yaw)*14);camera.position.lerp(desired,1-Math.exp(-dt*6));target.set(x-Math.sin(yaw)*9,2.3,z-Math.cos(yaw)*9);camera.lookAt(target);
+    if(input.wheel?.y)zoomAim=Math.max(.55,Math.min(2.6,zoomAim*Math.exp(input.wheel.y*.0012)));
+    zoom+=(zoomAim-zoom)*(1-Math.exp(-dt*8));
+    // Further back also climbs higher, so the boat stays clear of the horizon when zoomed out.
+    const back=14*zoom, up=2.5+3.5*zoom;
+    desired.set(x+Math.sin(yaw)*back,up+height*.2,z+Math.cos(yaw)*back);camera.position.lerp(desired,1-Math.exp(-dt*6));target.set(x-Math.sin(yaw)*9,2.3,z-Math.cos(yaw)*9);camera.lookAt(target);
   }
   function state(){return {x:sim.x,z:sim.z,y:boat.position.y,yaw:sim.yaw,speed:sim.speed,clearance:sim.clearance,avoidance:sim.avoidance,surfaceHeight,pitch,roll,wind:wind(sim.t),sail:{...sailWind(sim.yaw,sim.speed,sim.t),angle:sailAngle},helm:{input:turnInput,rudder:sim.rudder,heading:(((-sim.yaw*180/Math.PI)%360)+360)%360},autopilot:autopilot.state()};}
   reset();

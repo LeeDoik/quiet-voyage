@@ -6,12 +6,16 @@
 // shared world clock, so players on one server see the same whale breathe at the same moment.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { bakeTexture } from './materials.js';
 import { lifeNear, islandsNear } from './world-gen.js';
-import { surface } from './sea.js';
+import { surface, env } from './sea.js';
 import { sfx } from './audio.js';
 import { t } from './i18n.js';
-import { rideStep } from './dolphin-ride.js';
+import { rideStep, dolphinStep } from './dolphin-ride.js';
+import { createRipples } from './ripples.js';
+import { createUndersea } from './undersea.js';
+import { waveGLSL } from './wave-field.js';
 
 const TAU = Math.PI * 2;
 const RANGE = 1150;
@@ -199,8 +203,8 @@ function gullGeometry() {
   ]);
 }
 
-// One standard material per species; the vertex shader swims (undulation along the body) and
-// flaps (wing/flipper lift growing with |x|) from per-instance phase and amplitude.
+// One standard material per species. The coded shapes swim in the vertex shader (undulation along
+// the body, flaps growing with |x|) from per-instance phase and amplitude.
 function speciesMaterial(skin, roughness) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, map: skin, roughness, metalness: 0 });
   m.onBeforeCompile = shader => {
@@ -215,66 +219,199 @@ function speciesMaterial(skin, roughness) {
   return m;
 }
 
+// The Blender models carry their own animation: one swim or wing-beat cycle per species, authored in
+// tools/blender/marine_life.py and baked as Fourier harmonics per vertex,
+//   p(phi) = p + A1 cos phi + B1 sin phi + A2 cos 2phi + B2 sin 2phi   (normals: first harmonic),
+// stored as normalized bytes (positions times `scale`). aSwim.x is the phase, aSwim.y / ref the strength
+// (1 = the cycle as authored; gliding birds and fish use a fraction of it).
+//
+// Where the body meets the water the surface clings to it: a broken line of white along the waterline
+// and, just above it, skin that is still wet (darker and glossy). The water height comes from the same
+// wave field the ocean draws (swimTime is the water's clock).
+const swimTime = { value: 0 };
+function bakedMaterial(skin, roughness, scale, ref) {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, map: skin, roughness, metalness: 0 });
+  m.onBeforeCompile = shader => {
+    shader.uniforms.swimScale = { value: scale };
+    shader.uniforms.swimRef = { value: ref };
+    shader.uniforms.swimTime = swimTime;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec3 aSwim, aA1, aB1, aA2, aB2, aN1, aM1;
+        uniform float swimScale, swimRef, swimTime;
+        varying float vSwimWet;
+        varying vec2 vSwimXZ;
+        ${waveGLSL}`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        float swimS = clamp(aSwim.y / swimRef, 0., 1.2);
+        vec2 swim1 = vec2(cos(aSwim.x), sin(aSwim.x)), swim2 = vec2(cos(2. * aSwim.x), sin(2. * aSwim.x));
+        objectNormal = normalize(objectNormal + swimS * (aN1 * swim1.x + aM1 * swim1.y));`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        transformed += swimS * swimScale * (aA1 * swim1.x + aB1 * swim1.y + aA2 * swim2.x + aB2 * swim2.y);
+        vec4 swimWorld = modelMatrix * instanceMatrix * vec4(transformed, 1.);
+        vSwimWet = waveField(swimWorld.xz, swimTime).x + .04 - swimWorld.y;   // > 0 under the water
+        vSwimXZ = swimWorld.xz + swimWorld.y * .5;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float swimTime;
+        varying float vSwimWet;
+        varying vec2 vSwimXZ;
+        float swimHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float swimNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+          return mix(mix(swimHash(i), swimHash(i + vec2(1, 0)), f.x), mix(swimHash(i + vec2(0, 1)), swimHash(i + 1.), f.x), f.y); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float swimFlecks = swimNoise(vSwimXZ * 7. + swimTime * 1.3) * .6 + swimNoise(vSwimXZ * 19. - swimTime) * .4;
+        float swimLine = exp(-vSwimWet * vSwimWet / .004) * smoothstep(.3, .62, swimFlecks);
+        float swimWetness = smoothstep(-.7, -.02, vSwimWet);
+        diffuseColor.rgb *= 1. - .3 * swimWetness;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.9, .95, .95), swimLine * .9);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(roughnessFactor, .14, swimWetness * (1. - swimLine));`);
+  };
+  m.customProgramCacheKey = () => 'marine-baked';
+  return m;
+}
+
+// The Blender models (tools/blender/marine_life.py) replace the coded shapes above once they load;
+// the coded shapes stay as the fallback. `ref` is the amplitude each species' animate() passes when
+// it moves at full stroke; the coded shapes' swim weights come from `bend`.
+const MODEL_URL = new URL('../assets/blender/marine-life/marine-life.glb', import.meta.url).href;
+const tail = (a, b) => (x, y, z) => [smooth(a, b, z) ** 1.5, 0];
 const SPECIES = {
-  dolphin: { build: dolphinGeometry, cap: 140, name: t('돌고래'), sight: 260, rough: .35, k: 2.2 },
-  orca: { build: orcaGeometry, cap: 36, name: t('범고래'), sight: 420, rough: .3, k: .7 },
-  humpback: { build: humpbackGeometry, cap: 14, name: t('혹등고래'), sight: 900, rough: .5, k: .35 },
-  turtle: { build: turtleGeometry, cap: 24, name: t('바다거북'), sight: 110, rough: .7, k: 0 },
-  manta: { build: mantaGeometry, cap: 20, name: t('쥐가오리'), sight: 300, rough: .5, k: 0 },
-  flyingfish: { build: flyingFishGeometry, cap: 200, name: t('날치'), sight: 160, rough: .3, k: 9 },
-  gull: { build: gullGeometry, cap: 220, name: t('바닷새'), sight: 320, rough: .8, k: 0 },
+  dolphin: { build: dolphinGeometry, cap: 140, name: t('돌고래'), sight: 260, rough: .35, k: 2.2, ref: .07, bend: tail(-.2, 1.2) },
+  orca: { build: orcaGeometry, cap: 36, name: t('범고래'), sight: 420, rough: .3, k: .7, ref: .18, bend: tail(-.5, 3.5) },
+  humpback: { build: humpbackGeometry, cap: 14, name: t('혹등고래'), sight: 900, rough: .5, k: .35, ref: .35, bend: (x, y, z) => [smooth(-1, 6.5, z) ** 1.5, Math.abs(x) > 1.7 ? .15 : 0] },
+  turtle: { build: turtleGeometry, cap: 24, name: t('바다거북'), sight: 110, rough: .7, k: 0, ref: .45, bend: x => [0, smooth(.4, .75, Math.abs(x))] },
+  manta: { build: mantaGeometry, cap: 20, name: t('쥐가오리'), sight: 300, rough: .5, k: 0, ref: .6, bend: x => [0, smooth(.25, 2.2, Math.abs(x)) * .55] },
+  flyingfish: { build: flyingFishGeometry, cap: 200, name: t('날치'), sight: 160, rough: .3, k: 9, ref: .25, bend: (x, y, z) => [smooth(-.05, .17, z) ** 1.5, Math.abs(x) > .03 ? Math.abs(x) * 2 : 0] },
+  gull: { build: gullGeometry, cap: 220, name: t('바닷새'), sight: 320, rough: .8, k: 0, ref: .55, bend: x => [0, Math.abs(x) > .06 ? Math.abs(x) * 1.4 : 0] },
 };
+
+// How each animal meets the surface: ripple size, body length, how often a moving back throws up
+// white water, and how many drops a second stream off it when it leaves the sea.
+const SURF = {
+  dolphin: { size: 1.2, len: 2.3, every: .35, drips: 90 },
+  orca: { size: 4, len: 7, every: .5, drips: 160 },
+  humpback: { size: 7, len: 13, every: .8, drips: 260 },
+  turtle: { size: 1.2, len: 1, every: .9, drips: 30 },
+  manta: { size: 2.4, len: 2.5, every: .5, drips: 120 },
+  flyingfish: { size: .6, len: .34, every: .4, drips: 12 },
+};
+
+const HARMONICS = { _a1: 'aA1', _b1: 'aB1', _a2: 'aA2', _b2: 'aB2', _n1: 'aN1', _m1: 'aM1' };
+
+/** Swap each species' coded shape for its Blender model and its baked animation, keeping the per-instance swim attribute. */
+function loadModels(meshes, skin) {
+  new GLTFLoader().load(MODEL_URL, gltf => {
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.traverse(o => {
+      const mesh = o.isMesh && meshes[o.name], spec = SPECIES[o.name];
+      if (!mesh || !spec) return;
+      const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+      if (!Object.keys(HARMONICS).every(k => g.attributes[k]) || !(o.userData.swim > 0)) return;
+      for (const [from, to] of Object.entries(HARMONICS)) { g.setAttribute(to, g.attributes[from]); g.deleteAttribute(from); }
+      const old = mesh.geometry, swim = old.attributes.aSwim;
+      g.setAttribute('aSwim', swim);
+      g.computeBoundingSphere();
+      mesh.geometry = g;
+      old.deleteAttribute('aSwim');   // shared with the new geometry: keep its buffer alive
+      old.dispose();
+      mesh.material.dispose();
+      mesh.material = bakedMaterial(skin, spec.rough, o.userData.swim, spec.ref);
+      mesh.userData.swimScale = o.userData.swim; mesh.userData.swimRef = spec.ref;
+    });
+  }, undefined, error => console.warn('marine life models could not load; keeping the coded shapes', error));
+}
 
 // ── spray: spouts and splashes ─────────────────────────────────────────────────────────────
 
+// Spray: blows, splashes and the water that runs off a body leaving the sea. Drops fly under gravity
+// and end where they fall back into the water; mist (blows, big re-entries) hangs and drifts. A splash
+// is a crown thrown outward from the edge of the hole, plus, when something falls back in, a column of
+// water that jumps up from the middle after it. Drawn darker at night, as the water is.
 function createSpray(scene) {
-  const CAP = 1800;
-  const pos = new Float32Array(CAP * 3), vel = new Float32Array(CAP * 3), life = new Float32Array(CAP * 2), attr = new Float32Array(CAP * 2);
+  const CAP = 3200;
+  const pos = new Float32Array(CAP * 3), vel = new Float32Array(CAP * 3), life = new Float32Array(CAP * 3), attr = new Float32Array(CAP * 3);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geometry.setAttribute('aLife', new THREE.BufferAttribute(attr, 2));
+  geometry.setAttribute('aLife', new THREE.BufferAttribute(attr, 3));
   const material = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
     uniforms: { scale: { value: 600 }, tint: { value: new THREE.Color(.92, .96, .97) } },
-    vertexShader: `attribute vec2 aLife; varying float vAlpha; uniform float scale;
+    vertexShader: `attribute vec3 aLife; varying float vAlpha; uniform float scale;
       void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); float age=aLife.x, size=aLife.y;
-        vAlpha = age<0. ? 0. : (1.-age)*smoothstep(0.,.08,age);
-        gl_PointSize = age<0. ? 0. : size*(.6+1.4*age)*scale/max(1.,-mv.z); gl_Position = projectionMatrix*mv; }`,
+        vAlpha = age<0. ? 0. : (1.-age)*smoothstep(0.,.08,age)*abs(aLife.z);
+        float grow = aLife.z < 0. ? 1. : .6+1.4*age;     // drops keep their size; mist spreads as it drifts
+        gl_PointSize = age<0. ? 0. : max(1.5, size*grow*scale/max(1.,-mv.z)); gl_Position = projectionMatrix*mv; }`,
     fragmentShader: `varying float vAlpha; uniform vec3 tint;
       void main(){ vec2 p=gl_PointCoord*2.-1.; float d=dot(p,p); if(d>1.) discard;
-        gl_FragColor=vec4(tint, vAlpha*(1.-d)*.55); }`,
+        gl_FragColor=vec4(tint, vAlpha*(1.-d*d)*.75); }`,
   });
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false; points.userData.tag = 'spray';
   scene.add(points);
   let next = 0;
-  for (let i = 0; i < CAP; i++) attr[i * 2] = -1;
-  function emit(x, y, z, count, spread, up, size, lifetime, gravity, seed) {
+  for (let i = 0; i < CAP; i++) attr[i * 3] = -1;
+  // floor: the water level a falling drop ends at (-Infinity for mist).
+  function drop(x, y, z, vx, vy, vz, size, lifetime, gravity, alpha, floor) {
+    const k = next++ % CAP;
+    pos.set([x, y, z], k * 3); vel.set([vx, vy, vz], k * 3);
+    life[k * 3] = lifetime; life[k * 3 + 1] = gravity; life[k * 3 + 2] = floor;
+    attr[k * 3] = 0; attr[k * 3 + 1] = size; attr[k * 3 + 2] = alpha;
+  }
+  function emit(x, y, z, count, spread, up, size, lifetime, gravity, seed, alpha = 1, floor = y - .05) {
     for (let i = 0; i < count; i++) {
-      const k = next++ % CAP, a = h01(seed, i, 1) * TAU, r = h01(seed, i, 2);
-      pos.set([x, y, z], k * 3);
-      vel.set([Math.cos(a) * spread * r, up * (.7 + .5 * h01(seed, i, 3)), Math.sin(a) * spread * r], k * 3);
-      life[k * 2] = lifetime * (.75 + .5 * h01(seed, i, 4)); life[k * 2 + 1] = gravity;
-      attr[k * 2] = 0; attr[k * 2 + 1] = size * (.7 + .6 * h01(seed, i, 5));
+      const a = h01(seed, i, 1) * TAU, r = h01(seed, i, 2);
+      drop(x, y, z, Math.cos(a) * spread * r, up * (.7 + .5 * h01(seed, i, 3)), Math.sin(a) * spread * r,
+        size * (.7 + .6 * h01(seed, i, 5)), lifetime * (.75 + .5 * h01(seed, i, 4)), gravity, alpha, floor);
     }
   }
+  const day = new THREE.Color(.92, .96, .97), dark = new THREE.Color(.16, .2, .24);
   return {
-    blow(x, y, z, strength, seed) { emit(x, y, z, Math.round(60 * strength), .9 * strength, 6.5 * strength, 2.2 * strength, 3.6, 1.1, seed); },
-    splash(x, y, z, strength, seed) { emit(x, y, z, Math.round(36 * strength), 3.2 * strength, 4.2 * strength, .55 * strength, 1.3, 9.8, seed); },
+    blow(x, y, z, strength, seed) { emit(x, y, z, Math.round(60 * strength), .9 * strength, 6.5 * strength, 2.2 * strength, 3.6, 1.1, seed, 1, -Infinity); },
+    /** A dolphin's breath: a quick, faint puff of fine mist. */
+    puff(x, y, z, seed) { emit(x, y, z, 18, .5, 1.8, .14, 1.1, .6, seed, .35, -Infinity); },
+    /** Something breaking in or out of the water. `back`: it falls back in, so a column follows the crown. */
+    splash(x, y, z, strength, seed, back = true) {
+      const rim = .25 + .35 * strength;
+      for (let i = 0, n = Math.round(120 * strength); i < n; i++) {                 // the crown, from the rim outward
+        const a = h01(seed, i, 1) * TAU, out = (1.2 + 1.6 * h01(seed, i, 2)) * (.6 + .5 * strength);
+        drop(x + Math.cos(a) * rim, y, z + Math.sin(a) * rim, Math.cos(a) * out, (2.6 + 2.2 * h01(seed, i, 3)) * Math.sqrt(strength + .2), Math.sin(a) * out,
+          (.05 + .05 * strength) * (.6 + .8 * h01(seed, i, 5)), .9 + .5 * h01(seed, i, 4), 9.8, -.85, y - .05);
+      }
+      if (back) {                                                                    // the column from the middle
+        for (let i = 0, n = Math.round(40 * strength); i < n; i++) {
+          const a = h01(seed, i, 6) * TAU, r = .35 * h01(seed, i, 7);
+          drop(x + Math.cos(a) * r * .3, y, z + Math.sin(a) * r * .3, Math.cos(a) * r, (3.5 + 3.5 * h01(seed, i, 8)) * Math.sqrt(strength + .1), Math.sin(a) * r,
+            (.07 + .06 * strength) * (.6 + .8 * h01(seed, i, 9)), 1.1 + .5 * h01(seed, i, 10), 9.8, -.9, y - .05);
+        }
+      }
+      if (strength > .8) emit(x, y + .4, z, Math.round(14 * strength), 1.6 * strength, 1.2, 1.4 * strength, 2.6, .4, seed + 7, .45, -Infinity);   // mist
+    },
+    /** Water running off a body that has just left the sea: drops let go along its length and fall. */
+    drip(x, y, z, yaw, pitch, length, count, seed, floor) {
+      const fx = -Math.sin(yaw) * Math.cos(pitch), fy = Math.sin(pitch), fz = -Math.cos(yaw) * Math.cos(pitch);
+      for (let i = 0; i < count; i++) {
+        const u = (h01(seed, i, 1) - .5) * length, side = (h01(seed, i, 2) - .5) * length * .12;
+        drop(x + fx * u - fz * side, y + fy * u - .05, z + fz * u + fx * side, 0, -.2 * h01(seed, i, 3), 0,
+          .025 + .035 * h01(seed, i, 4) + length * .003, 1.2, 9.8, -.6, floor);
+      }
+    },
     update(dt) {
       for (let k = 0; k < CAP; k++) {
-        if (attr[k * 2] < 0) continue;
-        const a = attr[k * 2] + dt / life[k * 2];
-        if (a >= 1) { attr[k * 2] = -1; continue; }
-        attr[k * 2] = a;
-        vel[k * 3 + 1] -= life[k * 2 + 1] * dt;
+        if (attr[k * 3] < 0) continue;
+        const a = attr[k * 3] + dt / life[k * 3];
+        if (a >= 1 || (vel[k * 3 + 1] < 0 && pos[k * 3 + 1] < life[k * 3 + 2])) { attr[k * 3] = -1; continue; }   // gone, or back in the sea
+        attr[k * 3] = a;
+        vel[k * 3 + 1] -= life[k * 3 + 1] * dt;
         const drag = Math.exp(-dt * 1.2);
         vel[k * 3] *= drag; vel[k * 3 + 2] *= drag;
         pos[k * 3] += vel[k * 3] * dt; pos[k * 3 + 1] += vel[k * 3 + 1] * dt; pos[k * 3 + 2] += vel[k * 3 + 2] * dt;
       }
+      material.uniforms.tint.value.copy(day).lerp(dark, env.night.value);
       geometry.attributes.position.needsUpdate = true; geometry.attributes.aLife.needsUpdate = true;
     },
-    clear() { for (let i = 0; i < CAP; i++) attr[i * 2] = -1; geometry.attributes.aLife.needsUpdate = true; },
+    clear() { for (let i = 0; i < CAP; i++) attr[i * 3] = -1; geometry.attributes.aLife.needsUpdate = true; },
   };
 }
 
@@ -307,23 +444,20 @@ function animate(g, i, T, prevT, out, events, ride) {
     const side = (i % 2 ? 1 : -1) * (1.5 + Math.floor(i / 2) * 1.6), back = Math.floor(i / 2) * 2.2 + seed * 1.5;
     let x = path.x + Math.cos(path.yaw) * side + Math.sin(path.yaw) * back;
     let z = path.z - Math.sin(path.yaw) * side + Math.cos(path.yaw) * back;
-    let yaw = path.yaw, speed = 4.2;
-    if (ride.amount > 0) {
-      const b = ride.boat, rs = (i % 2 ? 1 : -1) * (3.2 + (i % 3) * 1.6 + Math.sin(T * .5 + i) * .7), ahead = 6 + (i % 4) * 3.2 + Math.sin(T * .7 + i) * 1.6;
-      const rx = b.x - Math.sin(b.yaw) * ahead + Math.cos(b.yaw) * rs, rz = b.z - Math.cos(b.yaw) * ahead - Math.sin(b.yaw) * rs;
-      x = mix(x, rx, ride.amount); z = mix(z, rz, ride.amount); yaw = mix(yaw, b.yaw, ride.amount); speed = mix(speed, b.speed + 1, ride.amount);
+    let yaw = path.yaw, speed = 4.2, roll = 0;
+    // Near a boat each dolphin swims for itself: in to the bow, alongside, and away again (dolphin-ride.js).
+    if (ride.boat) {
+      const a = dolphinStep(ride, i, Math.max(0, Math.min(.1, T - prevT)), T, { x, z, yaw }, ride.boat);
+      if (a.active) { x = a.x; z = a.z; yaw = a.yaw; speed = a.speed; roll = a.bank; }
     }
     const P = 2.3 + seed * .5, u = ((T + seed * P) / P) % 1, cycle = Math.floor((T + seed * P) / P);
     // Porpoising: back and fin roll through the surface each breath; now and then a full leap.
     const leap = h01(g.seed, i, cycle) > .82 ? 1 : 0, rise = 1.5 + 1.25 * leap;
     let y = -2.2, pitch = 0;
     if (u < .46) { const k = u / .46; y = -1.05 + rise * Math.sin(Math.PI * k); pitch = Math.atan2(rise * Math.PI / (.46 * P) * Math.cos(Math.PI * k), speed) * .8; }
-    const dive = ride.dive ?? 0;
-    if (dive < .2) {
-      if (leap && crossed(prevT + seed * P, T + seed * P, P, .44 * P)) events.push(['splash', x, z, .7]);
-      if (crossed(prevT + seed * P, T + seed * P, P, .03 * P)) events.push(['puff', x, z, .12]);
-    }
-    return pose(out, x, y - dive * 7, z, yaw, pitch - dive * .35, 0, T * 9 + seed * 6, .07);
+    if (leap && crossed(prevT + seed * P, T + seed * P, P, .44 * P)) events.push(['splash', x, z, .7]);
+    if (crossed(prevT + seed * P, T + seed * P, P, .03 * P)) events.push(['puff', x, z, .12]);
+    return pose(out, x, y, z, yaw, pitch, roll, T * 9 + seed * 6, .07);
   }
   if (species === 'orca') {
     const path = groupPath(g, T, 3.4);
@@ -378,8 +512,8 @@ function animate(g, i, T, prevT, out, events, ride) {
     let y = -3, pitch = 0, roll = 0;
     if (u < 1.6) { const k = u / 1.6; y = -1 + 3.6 * Math.sin(Math.PI * k); pitch = .9 * (1 - 2 * k); roll = TAU * .5 * smooth(.2, .8, k) * (seed > .5 ? 1 : -1); }
     if (crossed(prevT + seed * C, T + seed * C, C, 1.5)) events.push(['splash', x, z, 1.2]);
-    if (crossed(prevT + seed * C, T + seed * C, C, .05)) events.push(['splash', x, z, .6]);
-    return pose(out, x, y, z, path.yaw, pitch, roll, T * 4 + seed * 6, .6);
+    if (crossed(prevT + seed * C, T + seed * C, C, .05)) events.push(['leave', x, z, .6]);
+    return pose(out, x, y, z, path.yaw, pitch, roll, T * 2.8 + seed * 6, .6);
   }
   if (species === 'flyingfish') {
     const path = groupPath(g, T, 2);
@@ -393,9 +527,12 @@ function animate(g, i, T, prevT, out, events, ride) {
   return null;
 }
 
+/** Where animal `i` of group `g` is at time T on its own (no boat): {x, y, z, ...}, or null. For tools and tests. */
+export function poseAt(g, i, T) { return animate(g, i, T, T, {}, [], { amount: 0 }); }
+
 // ── module ─────────────────────────────────────────────────────────────────────────────────
 
-export function createMarineLife(scene) {
+export function createMarineLife(scene, { renderer = null, water = null } = {}) {
   const skin = bakeTexture({ kind: 'plaster', seed: 21, palette: [0xe9e9e7, 0xdcdcda, 0xf3f3f1], size: 256 }).map;
   const meshes = {};
   for (const [key, spec] of Object.entries(SPECIES)) {
@@ -409,7 +546,11 @@ export function createMarineLife(scene) {
     scene.add(mesh);
     meshes[key] = mesh;
   }
-  const spray = createSpray(scene);
+  loadModels(meshes, skin);
+  const spray = createSpray(scene), ripples = createRipples(scene);
+  const undersea = renderer && water?.lifeMap ? createUndersea({ renderer, scene, meshes, uniforms: water }) : null;
+  const surfaced = new Map();   // `${group}:${i}` → {above, at, seen}: when each animal last broke the surface
+  let frame = 0;
   const groups = [], islands = [], ride = new Map(), sighted = new Map();
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, 'YXZ'), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   const out = {}, events = [], notices = [];
@@ -447,7 +588,7 @@ export function createMarineLife(scene) {
       visible = 0;
       for (const g of groups) {
         const spec = SPECIES[g.species];
-        // Dolphins come over to ride a moving bow wave, then dive and go back to their own way.
+        // Dolphins come over to ride a moving bow wave, then swim off on their own way, still breathing at the surface.
         let r = ride.get(g.id);
         if (g.species === 'dolphin') {
           const c = groupPath(g, T, 4.2);
@@ -470,11 +611,29 @@ export function createMarineLife(scene) {
             if (kind === 'blow') { spray.blow(ex, ey + .6, ez, strength, ex * 7 + ez); sfx.blow(ex, ez, strength); if (distance < spec.sight) sight(g.id, g.species, distance, t(g.species === 'humpback' ? '멀리서 혹등고래가 숨을 내뿜었어요' : '범고래가 짧게 숨을 쉬었어요'), ex, ey + 4, ez); }
             else if (kind === 'breach') { spray.splash(ex, ey, ez, strength, ex + ez * 3); spray.blow(ex, ey, ez, 1.2, ez); if (distance < spec.sight && inView(ex, ey + 4, ez)) { sight(g.id, g.species, distance, t('혹등고래가 물 위로 솟구쳤어요')); notices.push({ species: g.species, name: t('혹등고래'), text: t('혹등고래가 물 위로 솟구쳤어요!'), distance }); } }
             else if (kind === 'fluke') { if (distance < spec.sight && inView(ex, ey + 3, ez)) notices.push({ species: g.species, name: t('혹등고래'), text: t('꼬리지느러미를 들어 올리며 깊이 잠수해요'), distance }); }
-            else if (kind === 'puff') { if (distance < 120) spray.blow(ex, ey + .2, ez, strength, ex * 5 + ez); }
-            else spray.splash(ex, ey, ez, strength, ex * 3 + ez);
+            else if (kind === 'puff') { if (distance < 120) spray.puff(ex, ey + .25, ez, ex * 5 + ez); }
+            else spray.splash(ex, ey, ez, strength, ex * 3 + ez, kind !== 'leave');
           }
+          const sf = SURF[g.species], size = sf.size, seed = a.x * 3 + a.z + i;
+          // Breaking the surface, going in or coming out, leaves white water and rings where it happened;
+          // a body that rises clear streams water for a moment, and a big back that sinks leaves a smooth
+          // print on the water (a whale's "footprint") that lingers after it has gone.
+          const key = `${g.id}:${i}`, above = a.y + size * .25 > 0, was = surfaced.get(key), near = distance < 320;
+          if (was && was.above !== above && T - was.at > .35 && near) {
+            ripples.add(a.x, a.z, size * (above ? .75 : 1), seed, 'ring'); was.at = T;
+            if (above) was.drip = T + .9;
+            else if (size >= 4) ripples.add(a.x, a.z, size * .9, seed + 1, 'slick');
+          }
+          // A back or fin moving along the waterline pushes up white water that trails behind it.
+          if (was && near && a.y < size * .1 && a.y > -size * .38 && T - was.wash > sf.every) {
+            ripples.add(a.x + Math.sin(a.yaw) * sf.len * .3, a.z + Math.cos(a.yaw) * sf.len * .3, size * .55, seed, 'wash', a.yaw); was.wash = T;
+          }
+          if (was && was.drip > T && a.y - size * .15 > 0 && distance < 180) {
+            const n = Math.min(12, Math.ceil(dt * sf.drips * (was.drip - T)));
+            spray.drip(a.x, water + a.y, a.z, a.yaw, a.pitch, sf.len, n, seed + frame, water - .05);
+          }
+          if (was) { was.above = above; was.seen = frame; } else surfaced.set(key, { above, at: -1e9, wash: -1e9, drip: 0, seen: frame });
           if (a.y < -3.5) continue;
-          const size = g.species === 'humpback' ? 7 : g.species === 'orca' ? 4 : 1.2;
           if (distance > RANGE) continue;
           if (a.y + size * .6 > 0 && distance < spec.sight) {
             const texts = { dolphin: '돌고래 무리가 물살을 가르며 지나가요', orca: '범고래 무리의 높은 등지느러미가 보여요', humpback: '혹등고래의 등이 물 위로 드러났어요', turtle: '바다거북이 숨을 쉬러 올라왔어요', manta: '쥐가오리가 물 위로 뛰어올랐어요', flyingfish: '날치 떼가 수면 위를 날아가요' };
@@ -491,7 +650,7 @@ export function createMarineLife(scene) {
             const a = T * (.35 + .1 * h01(g.seed, b)) + b * 1.05, rad = 12 + 10 * h01(g.seed, b, 2), alt = 9 + 7 * h01(g.seed, b, 3) + Math.sin(T * .6 + b) * 2;
             const bx = c.x + Math.cos(a) * rad, bz = c.z + Math.sin(a) * rad;
             if (Math.hypot(bx - boat.x, bz - boat.z) > RANGE) continue;
-            place('gull', bx, alt, bz, -a, 0, -.35, T * 7 + b, Math.sin(T * .9 + b) > .2 ? .55 : .05, 0);
+            place('gull', bx, alt, bz, -a, 0, -.35, T * 15 + b, Math.sin(T * .9 + b) > .2 ? .55 : .05, 0);
             if (Math.hypot(bx - boat.x, bz - boat.z) < SPECIES.gull.sight) sight(`birds:${g.id}`, 'gull', Math.hypot(bx - boat.x, bz - boat.z), t('바닷새들이 맴돌고 있어요 — 아래에 무언가 있을지도'), bx, alt, bz);
           }
         }
@@ -504,18 +663,23 @@ export function createMarineLife(scene) {
           const a = T * (.25 + .12 * h01(s.seed % 1000, b)) * (b % 2 ? 1 : -1) + b * 1.3, rad = Math.max(s.rx, s.rz) * (.4 + .5 * h01(s.seed % 997, b)), alt = s.height + 6 + 10 * h01(s.seed % 991, b);
           const bx = s.x + Math.cos(a) * rad, bz = s.z + Math.sin(a) * rad;
           if (call && b === 0) sfx.gull(bx, bz);   // the cry comes from a bird you can see
-          place('gull', bx, alt, bz, b % 2 ? -a : -a + Math.PI, 0, b % 2 ? -.3 : .3, T * 6 + b, Math.sin(T * .7 + b * 2) > 0 ? .5 : .05, 0);
+          place('gull', bx, alt, bz, b % 2 ? -a : -a + Math.PI, 0, b % 2 ? -.3 : .3, T * 14 + b, Math.sin(T * .7 + b * 2) > 0 ? .5 : .05, 0);
         }
       }
       for (const mesh of Object.values(meshes)) { mesh.instanceMatrix.needsUpdate = true; mesh.geometry.attributes.aSwim.needsUpdate = true; }
-      spray.update(dt);
+      spray.update(dt); ripples.update(dt, waveT);
+      swimTime.value = waveT;
+      undersea?.update(camera, waveT);
+      for (const [key, s] of surfaced) if (s.seen !== frame) surfaced.delete(key);
+      frame++;
       seen = sighted.size;
       prevT = T;
       for (const [id, r] of ride) if (!groups.some(g => g.id === id)) ride.delete(id);
     },
     /** Sightings since the last call: [{species, name, text, distance}]. */
     drain() { return notices.splice(0); },
-    reset() { sighted.clear(); ride.clear(); prevT = null; spray.clear(); for (const k in counts) counts[k] = 0; notices.length = 0; },
+    undersea,
+    reset() { sighted.clear(); ride.clear(); surfaced.clear(); prevT = null; spray.clear(); ripples.clear(); for (const k in counts) counts[k] = 0; notices.length = 0; },
     state: () => ({ groups: groups.length, visible, sighted: seen, counts: { ...counts } }),
     species: SPECIES,
   };

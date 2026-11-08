@@ -3,3 +3,4 @@ node_modules/
 .dev-key
 .DS_Store
 .dev.vars
+tools/blender/renders/

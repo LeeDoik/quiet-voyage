@@ -125,7 +125,9 @@ export function connectSea({ url, id, name, position = null }) {
     } else if (msg.t === 'leave') {
       if (remote.delete(msg.id)) emit('leave', msg.id);
     } else if (msg.t === 'bottles') {
-      if (Array.isArray(msg.list)) bottles.set(sock.key, msg.list.filter(b => b && Number.isFinite(b.x) && Number.isFinite(b.z) && Number.isInteger(b.p)));
+      if (Array.isArray(msg.list)) bottles.set(sock.key, msg.list.filter(b => b && Number.isFinite(b.x) && Number.isFinite(b.z) && (Number.isInteger(b.p) || (typeof b.text === 'string' && b.text.length <= 80))));
+    } else if (msg.t === 'bottle-result') {
+      emit('bottle', { ok: !!msg.ok, reason: typeof msg.reason === 'string' ? msg.reason : '' });
     } else if (msg.t === 'full') {
       if (channel < CHANNELS) { channel++; redial(); }
     }
@@ -259,7 +261,8 @@ export function connectSea({ url, id, name, position = null }) {
     },
     leave() { shutdown(); },
     bottles() { return [...bottles.values()].flat(); },
-    dropBottle(p) { const own = sockets.get(ownKey); if (!own || own.ws?.readyState !== 1) return false; send(own, JSON.stringify({ t: 'bottle', p })); return true; },
+    /** A preset phrase index, or {text} a sailor wrote (checked on the server; the answer comes as a 'bottle' event). */
+    dropBottle(what) { const own = sockets.get(ownKey); if (!own || own.ws?.readyState !== 1) return false; send(own, JSON.stringify(typeof what === 'object' ? { t: 'bottle', text: String(what.text) } : { t: 'bottle', p: what })); return true; },
     serverTime() { return offset === null ? null : (now() + offset) / 1000; },
     channel: () => channel,
     cells: () => [...sockets.values()].map(s => ({ cell: s.key, own: s.own, open: s.ws?.readyState === 1 })),

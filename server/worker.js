@@ -2,6 +2,7 @@
 // a Durable Object per (channel, cell). Cells are 2 km squares of a 30 km-radius sea; a player
 // publishes into the cell under its boat and watches the neighbouring cells it is close to.
 import { DurableObject } from 'cloudflare:workers';
+import { cleanLetter, moderateLetter } from './moderate.js';
 
 const CELL_SIZE = 2000;
 const CELL_LIMIT = 16;          // |cx|, |cz| ≤ 16 covers the 30 km world radius
@@ -15,8 +16,9 @@ const OWN_CAPACITY = 200;               // published players per cell before the
 const MAX_MSGS_PER_SEC = 30;
 const PUBLISH_MARGIN = 300;             // an own player may drift this far past the cell edge
 const TAU = Math.PI * 2;
-const BOTTLE_PHRASES = 8;               // src/bottles.js PHRASES.length: only preset indices, no free text
+const BOTTLE_PHRASES = 8;               // src/bottles.js PHRASES.length: preset phrases travel as indices
 const BOTTLE_CAP = 40, BOTTLE_TTL = 7 * 24 * 3600 * 1000, BOTTLE_EVERY = 30000;
+const LETTER_TRY_EVERY = 4000;          // written letters: one check at a time, at most one every 4 s per socket
 
 function parseCell(url) {
   const match = /^(-?\d{1,3}),(-?\d{1,3})$/.exec(url.searchParams.get('cell') || '');
@@ -111,7 +113,7 @@ export class SeaCell extends DurableObject {
     if (msg.t === 'hello') this.hello(ws, s, msg);
     else if (msg.t === 'mode') this.setOwn(ws, s, !!msg.own);
     else if (msg.t === 'quiet') this.quiet(ws, s, msg.p);
-    else if (msg.t === 'bottle') this.bottle(s, msg);
+    else if (msg.t === 'bottle') return this.bottle(ws, s, msg);   // returned: the object waits for the letter check
   }
 
   hello(ws, s, msg) {
@@ -150,17 +152,35 @@ export class SeaCell extends DurableObject {
     return this.bottleList;
   }
 
-  async bottle(s, msg) {
-    const p = Number(msg.p), now = Date.now();
-    if (s.id === null || !s.own || s.x === null || !Number.isInteger(p) || p < 0 || p >= BOTTLE_PHRASES) return;
-    if (now - (s.lastBottle ?? 0) < BOTTLE_EVERY) return;
-    s.lastBottle = now;
+  // A bottle carries a preset phrase (p) or a letter the sailor wrote (text), which Jev checks first
+  // (moderate.js). The sender hears back either way: {t:'bottle-result', ok, reason}.
+  async bottle(ws, s, msg) {
+    const now = Date.now(), reply = (ok, reason) => this.send(ws, JSON.stringify({ t: 'bottle-result', ok, reason }));
+    if (s.id === null || !s.own || s.x === null) return reply(false, 'offline');
+    if (now - (s.lastBottle ?? 0) < BOTTLE_EVERY) return reply(false, 'wait');
+    const entry = { x: Math.round(s.x * 10) / 10, z: Math.round(s.z * 10) / 10 };
+    if (typeof msg.text === 'string') {
+      const text = cleanLetter(msg.text);
+      if (!text) return reply(false, 'empty');
+      if (s.checking || now - (s.lastLetterTry ?? 0) < LETTER_TRY_EVERY) return reply(false, 'wait');
+      s.checking = true; s.lastLetterTry = now;
+      let verdict;
+      try { verdict = await moderateLetter(text, this.env?.TYPESAFE_API_KEY); } finally { s.checking = false; }
+      if (!verdict.ok) return reply(false, verdict.reason);
+      entry.text = text;
+    } else {
+      const p = Number(msg.p);
+      if (!Number.isInteger(p) || p < 0 || p >= BOTTLE_PHRASES) return reply(false, 'invalid');
+      entry.p = p;
+    }
+    s.lastBottle = Date.now();
     const list = await this.bottles();
-    list.push({ id: `${now.toString(36)}-${s.id}`, p, x: Math.round(s.x * 10) / 10, z: Math.round(s.z * 10) / 10, name: s.name, by: s.id, at: now });
+    list.push({ id: `${now.toString(36)}-${s.id}`, ...entry, name: s.name, by: s.id, at: now });
     if (list.length > BOTTLE_CAP) list.splice(0, list.length - BOTTLE_CAP);
     await this.ctx.storage.put('bottles', list);
     const out = JSON.stringify({ t: 'bottles', list });
-    for (const ws of this.sessions.keys()) this.send(ws, out);
+    for (const other of this.sessions.keys()) this.send(other, out);
+    reply(true);
   }
 
   pose(s, data) {

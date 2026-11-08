@@ -1,15 +1,19 @@
 // Island meshes for the generated sea, streamed around the boat. Each island is one textured
 // terrain mesh whose coastline is exactly the collision shape in world-gen.js, plus its trees
 // merged into one mesh per material (two or three draw calls an island), and sometimes a
-// lighthouse. Islands are built nearest-first, one per frame, and disposed once far behind.
+// lighthouse; then its ground cover and the things that make its concept (island-decor.js).
+// Islands are built nearest-first, one per frame, and disposed once far behind.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { bakeTexture, makeRng, triplanar, standardMaterial } from './materials.js';
 import { makeTree, makeTrunk, makeCanopy, foliageMaterial } from './foliage.js';
-import { islandsNear, coastFactor, HOME_ISLANDS } from './world-gen.js';
+import { islandsNear, coastFactor, islandDistance, HOME_ISLANDS } from './world-gen.js';
+import { decorate, decorClock } from './island-decor.js';
 
 const LOAD = 1900, UNLOAD = 2400, TREE_RANGE = 1150;
-const RINGS = [0, .1, .2, .3, .4, .5, .6, .68, .75, .81, .86, .9, .935, .965, 1, 1.03, 1.08, 1.16, 1.3];
+const REACH = 220;   // a light pulse this close to an island's coast wakes it
+const CLEAR_TOP = new Set(['pavilion', 'ruins', 'observatory', 'windmill', 'lighthouse']);
+const RINGS = [0, .06, .12, .18, .24, .3, .36, .42, .48, .54, .6, .65, .7, .75, .79, .83, .865, .895, .92, .945, .965, .983, 1, 1.03, 1.08, 1.16, 1.3];
 
 function hash(x, z, seed) {
   const s = Math.sin(x * 127.1 + z * 311.7 + seed * 74.7) * 43758.5453;
@@ -28,6 +32,8 @@ const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a
 export function terrainHeight(s, t, lx, lz) {
   if (t >= 1) return -Math.min(1, (t - 1) / .3) * 7;
   const H = s.height, n = fbm(lx * .018, lz * .018, s.seed % 997);
+  // Ridges and gullies (ridged noise) and a fine lumpiness, so slopes are not smooth domes.
+  const ridge = 1 - Math.abs(2 * fbm(lx * .03, lz * .03, s.seed % 991 + 5) - 1), fine = fbm(lx * .07, lz * .07, s.seed % 983 + 9) - .5;
   let h;
   switch (s.kind) {
     case 'rock': h = H * Math.pow(Math.max(0, 1 - t ** 3), .55) * (.6 + .7 * n); break;
@@ -36,6 +42,7 @@ export function terrainHeight(s, t, lx, lz) {
     case 'sandbar': h = H * (1 - t * t); break;
     default: h = H * Math.pow(Math.max(0, 1 - t * t), 1.25) * (.6 + .8 * n);
   }
+  if (s.kind !== 'sandbar') h = h * (.9 + .2 * ridge) + fine * Math.min(.6, H * .02) * smooth(.95, .6, t);   // gullies, and gentle bumps
   const beach = smooth(.72, 1, t);
   return h * (1 - beach) + beach * Math.min(h, 1.5 * (1 - t) / .28);
 }
@@ -95,7 +102,7 @@ function treeTemplates() {
 
 function buildTerrain(s) {
   const perimeter = Math.PI * (s.rx + s.rz);
-  const S = Math.max(40, Math.min(112, Math.round(perimeter / 7)));
+  const S = Math.max(48, Math.min(168, Math.round(perimeter / 4.5)));
   const R = RINGS.length, positions = new Float32Array(R * S * 3), colors = new Float32Array(R * S * 3);
   const c = Math.cos(s.rot), n = Math.sin(s.rot);
   for (let r = 0; r < R; r++) for (let j = 0; j < S; j++) {
@@ -108,24 +115,28 @@ function buildTerrain(s) {
   const index = [];
   for (let r = 0; r < R - 1; r++) for (let j = 0; j < S; j++) {
     const a = r * S + j, b = r * S + (j + 1) % S, d = (r + 1) * S + j, e = (r + 1) * S + (j + 1) % S;
-    index.push(a, d, b, b, d, e);
+    index.push(a, b, d, b, e, d);   // counter-clockwise seen from above: the faces (and normals) point up and out
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setIndex(index);
   geometry.computeVertexNormals();
   const normals = geometry.attributes.normal.array, col = new THREE.Color();
-  const sand = [.86, .8, .62], wet = [.6, .58, .47], rock = s.kind === 'volcano' ? [.36, .33, .31] : [.5, .5, .47];
+  const sand = s.kind === 'volcano' ? [.3, .28, .27] : s.kind === 'atoll' ? [.95, .92, .82] : [.86, .8, .62];
+  const wet = s.kind === 'volcano' ? [.2, .19, .19] : [.6, .58, .47], rock = s.kind === 'volcano' ? [.36, .33, .31] : [.5, .5, .47];
   for (let i = 0; i < R * S; i++) {
     const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2], slope = 1 - normals[i * 3 + 1];
     const v = fbm(x * .06, z * .06, 17), g = fbm(x * .02, z * .02, 29);
-    const grass = [.37 + .1 * g, .53 + .1 * v, .3 + .05 * g];
+    const dry = smooth(.55, .75, fbm(x * .035, z * .035, 41));          // sunburnt, yellower patches
+    const grass = [.37 + .1 * g + .12 * dry, .53 + .1 * v + .02 * dry, .3 + .05 * g - .04 * dry];
     let mixRock = Math.max(smooth(.28, .55, slope), s.kind === 'rock' ? .75 : 0, s.kind === 'volcano' ? smooth(s.height * .45, s.height * .7, y) : 0);
     if (s.kind === 'atoll' || s.kind === 'sandbar') mixRock *= .3;
     const sandy = s.kind === 'sandbar' ? 1 : smooth(2.2, 1.0, y) * (s.kind === 'atoll' ? 1 : .95);
     let rgb = grass.map((g0, k) => g0 + (rock[k] - g0) * mixRock);
     rgb = rgb.map((c0, k) => c0 + (sand[k] - c0) * sandy);
-    if (y < -.1) rgb = rgb.map((c0, k) => c0 + (wet[k] - c0) * Math.min(1, -y / 2));
+    if (y < .45) rgb = rgb.map((c0, k) => c0 + (wet[k] - c0) * Math.min(1, smooth(.45, -.1, y) * .55 + Math.max(0, -y / 2)));
+    if (s.concept === 'birds' && y > .6) rgb = rgb.map(c0 => c0 + (.93 - c0) * .75 * smooth(.45, .7, fbm(x * .3, z * .9, 51)));   // guano
+    if (s.kind === 'volcano') rgb = rgb.map((c0, k) => c0 + ([.24, .22, .21][k] - c0) * smooth(s.height * .55, s.height * .8, y));      // ash near the top
     const shade = .9 + .2 * v;
     col.setRGB(rgb[0] * shade, rgb[1] * shade, rgb[2] * shade, THREE.SRGBColorSpace);
     colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
@@ -150,7 +161,12 @@ function buildTrees(s) {
   const sets = treeTemplates(), rng = makeRng(s.seed + 77);
   const kinds = s.kind === 'atoll' ? ['palm'] : s.kind === 'volcano' || s.kind === 'rock' ? ['needle'] : ['broadleaf', 'broadleaf', 'needle'];
   const byMaterial = new Map(), matrix = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  let placed = 0;
+  let placed = 0, top = 0;
+  if (CLEAR_TOP.has(s.concept)) for (let i = 0; i < 200; i++) {   // the island's real top, not its nominal height
+    const a = i * 2.39996, t = Math.sqrt((i + .5) / 200) * .9, f = coastFactor(s, a);
+    const u = Math.cos(a) * s.rx * f * t, v = Math.sin(a) * s.rz * f * t;
+    top = Math.max(top, localHeight(s, u * Math.cos(s.rot) - v * Math.sin(s.rot), u * Math.sin(s.rot) + v * Math.cos(s.rot)).h);
+  }
   for (let attempt = 0; attempt < s.trees * 5 && placed < s.trees; attempt++) {
     const a = rng() * Math.PI * 2, t = Math.sqrt(rng()) * (s.kind === 'atoll' ? .8 : .78), f = coastFactor(s, a);
     const u = Math.cos(a) * s.rx * f * t, v = Math.sin(a) * s.rz * f * t;
@@ -158,6 +174,7 @@ function buildTrees(s) {
     const { h } = localHeight(s, x, z), side = localHeight(s, x + 2, z).h, front = localHeight(s, x, z + 2).h;
     const slope = Math.hypot(side - h, front - h) / 2;
     if (h < 1.6 || slope > .75 || (s.kind === 'volcano' && h > s.height * .6)) continue;
+    if (top && h > top * .55) continue;   // keep the hilltop open for its landmark
     const kind = kinds[Math.floor(rng() * kinds.length)], set = sets[kind], template = set[Math.floor(rng() * set.length)];
     const scale = .75 + rng() * .5;
     matrix.compose(new THREE.Vector3(x, h - .3, z), q.setFromAxisAngle(up, rng() * Math.PI * 2), new THREE.Vector3(scale, scale, scale));
@@ -194,7 +211,7 @@ function buildLighthouse(s) {
   const body = new THREE.Mesh(tower, towerMaterial); body.userData.tag = 'lighthouse';
   const lamp = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 2.2, 14), lampMaterial); lamp.position.y = 15.7; lamp.userData.tag = 'lighthouse-lamp';
   const roof = new THREE.Mesh(new THREE.ConeGeometry(1.6, 1.8, 14), towerMaterial); roof.position.y = 17.7; roof.userData.tag = 'lighthouse';
-  const beam = new THREE.Mesh(beamGeometry, beamMaterial); beam.position.y = 15.7; beam.userData.tag = 'lighthouse-beam'; beam.userData.phase = rng() * 6;
+  const beam = new THREE.Mesh(beamGeometry, beamMaterial.clone());   // its own, so it can answer alone beam.position.y = 15.7; beam.userData.tag = 'lighthouse-beam'; beam.userData.phase = rng() * 6;
   group.add(body, lamp, roof, beam); group.position.set(x, h - .4, z);
   group.userData.beam = beam;
   return group;
@@ -207,7 +224,15 @@ export function buildIsland(s) {
   group.add(buildTerrain(s));
   const trees = buildTrees(s); if (trees) group.add(trees);
   if (s.landmark === 'lighthouse') { const l = buildLighthouse(s); group.add(l); group.userData.beam = l.userData.beam; }
-  group.userData.trees = trees;
+  const c = Math.cos(s.rot), n = Math.sin(s.rot);
+  const site = {
+    s,
+    polar: (a, t) => { const f = coastFactor(s, a), u = Math.cos(a) * s.rx * f * t, v = Math.sin(a) * s.rz * f * t; return { x: u * c - v * n, z: u * n + v * c }; },
+    ground: (x, z) => localHeight(s, x, z),
+  };
+  const decor = decorate(site, flatten, barkMaterial);
+  group.add(decor.near, decor.landmarks);
+  group.userData.trees = trees; group.userData.decor = decor.near; group.userData.animate = decor.animate; group.userData.react = decor.react; group.userData.reactAt = -1e9;
   return group;
 }
 
@@ -234,8 +259,22 @@ export function createIslands(scene) {
   return {
     update(dt, boat, time = 0, night = 0) {
       clock += dt;
-      beamMaterial.uniforms.night.value = night; lampMaterial.emissiveIntensity = .9 + 3 * night;
-      for (const { group } of live.values()) { const beam = group.userData.beam; if (beam) { beam.visible = night > .05; beam.rotation.y = time * .7 + beam.userData.phase; } }
+      lampMaterial.emissiveIntensity = .9 + 3 * night;
+      // Windmills turn with the wind, smoke drifts with it; lit windows follow the night.
+      const wind = boat.wind ?? { direction: 0, strength: .5 }, strength = Math.min(1, wind.strength ?? .5);
+      decorClock.time.value = time; decorClock.wind.value.set(-Math.sin(wind.direction ?? 0) * strength, -Math.cos(wind.direction ?? 0) * strength);
+      for (const { group } of live.values()) {
+        // An answer rises in half a second, holds, and fades out over the last eight of ~24 s.
+        const since = time - group.userData.reactAt, react = since < 0 ? 0 : smooth(0, .6, since) * (1 - smooth(16, 24, since));
+        for (const step of group.userData.animate ?? []) step(time, strength, react, night);
+        const beam = group.userData.beam;
+        if (beam) {                                                   // the lighthouse answers by day too, and turns faster
+          beam.visible = night > .05 || react > .02;
+          beam.material.uniforms.night.value = Math.max(night, react * 1.4);
+          beam.userData.angle = (beam.userData.angle ?? beam.userData.phase) + Math.min(.1, dt) * (.7 + 2.5 * react);
+          beam.rotation.y = beam.userData.angle;
+        }
+      }
       if (Math.hypot(boat.x - last.x, boat.z - last.z) > 60 || clock > 2) { plan(boat.x, boat.z); last = { x: boat.x, z: boat.z }; clock = 0; }
       // One island a frame keeps streaming under the frame budget.
       const next = queue.shift();
@@ -244,10 +283,21 @@ export function createIslands(scene) {
     },
     prepare(camera, frustum) {
       for (const { spec, group } of live.values()) {
-        const trees = group.userData.trees;
-        if (!trees) continue;
-        trees.visible = Math.hypot(camera.position.x - spec.x, camera.position.z - spec.z) - Math.max(spec.rx, spec.rz) < TREE_RANGE;
+        const near = Math.hypot(camera.position.x - spec.x, camera.position.z - spec.z) - Math.max(spec.rx, spec.rz) < TREE_RANGE;
+        if (group.userData.trees) group.userData.trees.visible = near;
+        if (group.userData.decor) group.userData.decor.visible = near;
       }
+    },
+    /**
+     * A light pulse at (x, z) at shared time `time`: the nearest built island within REACH of its coast
+     * answers. Returns its spec, or null.
+     */
+    respond(x, z, time) {
+      let best = null, bestD = REACH;
+      for (const entry of live.values()) { const d = islandDistance(entry.spec, x, z); if (d < bestD) { bestD = d; best = entry; } }
+      if (!best) return null;
+      best.group.userData.reactAt = time; best.group.userData.react?.(time);
+      return best.spec;
     },
     /** Specs of islands within `reach` of the coast, nearest first. */
     nearby(x, z, reach) {

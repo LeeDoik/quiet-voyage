@@ -2,6 +2,7 @@
 // player computes the same islands and the same marine-life groups for the same coordinates, so
 // nothing about the map is sent over the network. Pure functions only: no scene, no clock.
 import { lang, t } from './i18n.js';
+import { conceptFor, conceptName } from './island-concepts.js';
 
 // mulberry32, kept local so node tests can import this module without three.js.
 function makeRng(seed) {
@@ -22,9 +23,9 @@ export const HOME_RADIUS = 950;         // the hand-built home waters stay as au
 
 // The home islands keep their exact collision ellipses (tests and demos depend on them).
 export const HOME_ISLANDS = [
-  { id: 'home-0', x: -105, z: -240, rx: 50.4, rz: 31.36, rot: 0, a2: 0, a3: 0, a5: 0, height: 25, kind: 'green', seed: 11, name: t('첫 바람섬'), home: true, trees: 13 },
-  { id: 'home-1', x: -310, z: -500, rx: 100.8, rz: 50.4, rot: 0, a2: 0, a3: 0, a5: 0, height: 30, kind: 'green', seed: 23, name: t('긴 등섬'), home: true, trees: 18 },
-  { id: 'home-2', x: 340, z: -650, rx: 117.6, rz: 52.64, rot: 0, a2: 0, a3: 0, a5: 0, height: 40, kind: 'green', seed: 37, name: t('높은 숲섬'), home: true, trees: 22 },
+  { id: 'home-0', x: -105, z: -240, rx: 50.4, rz: 31.36, rot: 0, a2: 0, a3: 0, a5: 0, height: 25, kind: 'green', seed: 11, name: t('첫 바람섬'), home: true, trees: 26, concept: 'windmill' },
+  { id: 'home-1', x: -310, z: -500, rx: 100.8, rz: 50.4, rot: 0, a2: 0, a3: 0, a5: 0, height: 30, kind: 'green', seed: 23, name: t('긴 등섬'), home: true, trees: 40, concept: 'village' },
+  { id: 'home-2', x: 340, z: -650, rx: 117.6, rz: 52.64, rot: 0, a2: 0, a3: 0, a5: 0, height: 40, kind: 'green', seed: 37, name: t('높은 숲섬'), home: true, trees: 55, concept: 'pavilion' },
 ];
 
 // [Korean, English] pairs: the same seeded pick names one island in both languages.
@@ -90,10 +91,16 @@ function makeIsland(rng, cx, cz, index) {
     height: range(rng, h0, h1), seed: Math.floor(rng() * 1e9),
   };
   const [p, q] = [pick(rng, PREFIX), pick(rng, SUFFIX[kind])];
-  s.name = lang === 'ko' ? p[0] + q[0] : `${p[1]} ${q[1]}`;
-  s.trees = kind === 'green' ? Math.round(rx * .22) : kind === 'volcano' ? Math.round(rx * .16) : kind === 'atoll' ? Math.round(rx * .12) : kind === 'rock' ? Math.round(rng() * 3) : 0;
-  s.landmark = (kind === 'green' || kind === 'rock') && rng() < .14 ? 'lighthouse' : null;
-  s.birds = kind === 'rock' || kind === 'sandbar' || rng() < .3;
+  // Each island has a concept (island-concepts.js), picked from its seed so the random sequence
+  // here — and so the whole map — is unchanged; the concept gives the island its last name word.
+  s.concept = conceptFor(s);
+  const word = conceptName(s.concept);
+  s.name = lang === 'ko' ? p[0] + (word ?? q[0]) : `${p[1]} ${word ?? q[1]}`;
+  s.trees = kind === 'green' ? Math.round(rx * .5) : kind === 'volcano' ? Math.round(rx * .3) : kind === 'atoll' ? Math.round(rx * .25) : kind === 'rock' ? Math.round(rng() * 3) : 0;
+  const beacon = (kind === 'green' || kind === 'rock') && rng() < .14;   // drawn as before, so the sequence holds
+  s.landmark = s.concept === 'lighthouse' ? 'lighthouse' : null;
+  s.birds = kind === 'rock' || kind === 'sandbar' || rng() < .3 || s.concept === 'birds';
+  void beacon;
   return s;
 }
 

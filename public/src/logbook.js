@@ -4,6 +4,7 @@
 import { platform } from './platform.js';
 import { sfx } from './audio.js';
 import { t } from './i18n.js';
+import { conceptText, conceptReply } from './island-concepts.js';
 
 const KEY = 'sea.log.v1';
 // Field guide entries, in the order the guide lists them.
@@ -57,8 +58,19 @@ export function createLogbook() {
       voyage.islands.add(s.id);
       const first = !totals.islands.includes(s.id);
       if (first) { totals.islands.push(s.id); save(); sfx.discover(); }
-      record({ kind: 'island', title: s.name, description: t(first ? '처음 닿은 섬' : '다시 지나간 섬') });
-      say(first ? t('{name} · 처음 보는 섬', { name: s.name }) : s.name, 4.5);
+      // Coming close, the island's concept is what a sailor notices (island-concepts.js).
+      const about = conceptText(s.concept);
+      record({ kind: 'island', title: s.name, description: about ?? t(first ? '처음 닿은 섬' : '다시 지나간 섬') });
+      const hint = first && totals.islands.length <= 3 ? `\n${t('E 빛물결을 보내면 섬이 대답해요')}` : '';
+      say(first ? t('{name} · 처음 보는 섬', { name: s.name }) + (about ? `\n${about}` : '') + hint : about ? `${s.name}\n${about}` : s.name, first ? 7 : 4.5);
+    },
+    /** An island answered this boat's light pulse: said each time, logged once per island a voyage. */
+    reply(s) {
+      const line = conceptReply(s.concept);
+      if (!line) return;
+      say(`${s.name}\n${line}`, 5);
+      voyage.answered ??= new Set();
+      if (!voyage.answered.has(s.id)) { voyage.answered.add(s.id); record({ kind: 'moment', title: t('{name}의 대답', { name: s.name }), description: line }); }
     },
     creature(n) {
       const count = (voyage.species[n.species] || 0) + 1;
