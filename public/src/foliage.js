@@ -149,6 +149,20 @@ export function foliageMaterial({
     vertexColors: true,
   });
   material.userData.foliage = kind;
+  // The cards carry crown normals (makeCanopy: pointing out from the crown's centre), so a tree is
+  // lit as one leafy volume. Two-sided materials normally flip the normal on a card's back face,
+  // which turned every card facing away from the sun black; here both faces keep the crown normal,
+  // and light the sun sends through the leaves (seen from the shaded side) adds a soft glow.
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <normal_fragment_begin>", THREE.ShaderChunk.normal_fragment_begin.replace("normal *= faceDirection;", "").replace("normal = normal * faceDirection;", ""))
+      .replace("#include <lights_fragment_end>", `#include <lights_fragment_end>
+        #if NUM_DIR_LIGHTS > 0
+          float through = max(0.0, -dot(normal, directionalLights[0].direction));
+          reflectedLight.directDiffuse += diffuseColor.rgb * directionalLights[0].color * through * 0.22;
+        #endif`);
+  };
+  material.customProgramCacheKey = () => "foliage-crown-normals-v1";
   return material;
 }
 
@@ -186,6 +200,15 @@ export function makeCanopy({ radius = 2.2, cards = 28, seed = 1, material = null
     const card = new THREE.Mesh(geo, leaf);
     card.position.set(x, y, z);
     card.rotation.set(rng() * TAU, rng() * TAU, rng() * TAU);
+    // Crown normals: each corner's normal points out from the crown's centre (squashed like the
+    // crown), written in the card's own frame so it survives the card's rotation and any merge.
+    card.updateMatrix();
+    const normals = geo.attributes.normal, corner = new THREE.Vector3(), inverse = card.quaternion.clone().invert();
+    for (let v = 0; v < 4; v++) {
+      corner.fromBufferAttribute(geo.attributes.position, v).applyMatrix4(card.matrix);
+      corner.set(corner.x, corner.y / Math.max(0.3, squash) + radius * 0.25, corner.z).normalize().applyQuaternion(inverse);
+      normals.setXYZ(v, corner.x, corner.y, corner.z);
+    }
     card.castShadow = true;
     card.userData.tag = "foliage";
     group.add(card);
@@ -218,7 +241,9 @@ function roughen(geometry, rng, amount) {
  * A tapered, slightly crooked trunk with a few limbs. Base at y = 0. Tag "trunk", limbs "branch".
  * Returns the group and the limb tips (`userData.tips`) so canopies can sit on branch ends.
  */
-export function makeTrunk({ height = 5, radius = 0.28, seed = 1, material = null, limbs = 3, lean = 0.05 } = {}) {
+// `light: true` (islands): fewer sides and rings, no end caps — trunks in a forest seen from the sea are
+// mostly behind leaves, and this cuts a tree's bark from ~330 triangles to ~50.
+export function makeTrunk({ height = 5, radius = 0.28, seed = 1, material = null, limbs = 3, lean = 0.05, light = false } = {}) {
   const rng = makeRng(seed * 13 + 5);
   const bark =
     material ??
@@ -232,7 +257,7 @@ export function makeTrunk({ height = 5, radius = 0.28, seed = 1, material = null
     });
   const group = new THREE.Group();
   group.userData.tag = "trunk";
-  const geo = roughen(new THREE.CylinderGeometry(radius * 0.5, radius * 1.15, height, 9, 6, false), rng, radius * 0.35);
+  const geo = roughen(new THREE.CylinderGeometry(radius * 0.5, radius * 1.15, height, light ? 5 : 9, light ? 2 : 6, light), rng, radius * 0.35);
   geo.translate(0, height / 2, 0);
   const trunk = new THREE.Mesh(geo, bark);
   trunk.castShadow = true;
@@ -247,7 +272,7 @@ export function makeTrunk({ height = 5, radius = 0.28, seed = 1, material = null
     const a = (i / limbs) * TAU + rng() * 1.2;
     const pitch = 0.55 + rng() * 0.5; // radians up from horizontal
     const limbGeo = roughen(
-      new THREE.CylinderGeometry(radius * 0.18, radius * 0.42, len, 7, 3, false),
+      new THREE.CylinderGeometry(radius * 0.18, radius * 0.42, len, light ? 4 : 7, light ? 1 : 3, light),
       rng,
       radius * 0.2,
     );
@@ -281,6 +306,7 @@ export function makeTree({
   leaf = null,
   cards = null,
   lean = 0.05,
+  light = false,
 } = {}) {
   const rng = makeRng(seed * 31 + 7);
   const tree = new THREE.Group();
@@ -292,6 +318,7 @@ export function makeTree({
     material: bark,
     limbs: 3 + Math.floor(rng() * 2),
     lean,
+    light,
   });
   tree.add(trunk);
   const leafMat = leaf ?? foliageMaterial({ seed, kind, palette });

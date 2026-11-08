@@ -24,6 +24,8 @@ export function createOceanMaterial() {
       cove: {value: new THREE.Vector3(coveSpec.x, coveSpec.z, coveSpec.scale)},
       // Animals under the surface (undersea.js): closeness to the surface, and where the map lies (x, z, size, on).
       lifeMap: {value: null}, lifeFrame: {value: new THREE.Vector4(0, 0, 128, 0)},
+      // Islands and boats mirrored in the sea (reflection.js, high tier).
+      reflectionMap: {value: null}, reflectionMatrix: {value: new THREE.Matrix4()}, reflectionOn: {value: 0},
     },
     vertexShader: `
       uniform float time;
@@ -44,6 +46,9 @@ export function createOceanMaterial() {
       uniform vec3 cove;
       uniform sampler2D lifeMap;
       uniform vec4 lifeFrame;
+      uniform sampler2D reflectionMap;
+      uniform mat4 reflectionMatrix;
+      uniform float reflectionOn;
       varying vec3 vWorld;
       const float PI = 3.14159265;
       ${waveGLSL}
@@ -204,7 +209,19 @@ export function createOceanMaterial() {
           }
         }
         water *= 1.0-night*.7;
-        vec3 color = mix(water,skyColor(reflection,fresnel)*hull.x,fresnel);
+        vec3 mirrored = skyColor(reflection,fresnel)*hull.x;
+        // What stands above the water (islands, boats) mirrored over the sky, bent by the ripples and
+        // the swell; the bend shrinks with distance, where a pixel already averages many ripples.
+        if (reflectionOn > .5) {
+          vec4 rc = reflectionMatrix*vec4(vWorld.x, 0.0, vWorld.z, 1.0);
+          // Waves stretch a reflection into vertical streaks: three taps along the screen's vertical,
+          // spread wider the rougher the water and the farther the eye.
+          vec2 ruv = rc.xy/rc.w+normal.xz*(.11/(1.0+distanceToEye*.01));
+          float streak = .004+.01*gust+.006*smoothstep(1.0,1.6,wind.y);
+          vec4 seen = texture2D(reflectionMap, ruv)*.5+texture2D(reflectionMap, ruv+vec2(0.0,streak))*.25+texture2D(reflectionMap, ruv-vec2(0.0,streak))*.25;
+          mirrored = mix(mirrored, seen.rgb*hull.x, seen.a*.85);
+        }
+        vec3 color = mix(water,mirrored,fresnel);
 
         // Dielectric microfacet sun glints, widened when the footprint grows.
         float roughness = .22+.11*smoothstep(.2,4.0,footprint);

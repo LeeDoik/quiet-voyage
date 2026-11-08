@@ -567,14 +567,28 @@ export function createMarineLife(scene, { renderer = null, water = null } = {}) 
     notices.push({ species, name: SPECIES[species].name, text, distance });
   }
 
-  function place(key, x, y, z, yaw, pitch, roll, phase, amp, k, scale = 1) {
-    const mesh = meshes[key];
-    if (mesh.count >= SPECIES[key].cap) return;
-    const n = mesh.count++;
-    e.set(pitch, yaw, roll); q.setFromEuler(e); p.set(x, y, z);
-    m.compose(p, q, scale === 1 ? one : p.clone().set(scale, scale, scale));
-    mesh.setMatrixAt(n, m);
-    mesh.geometry.attributes.aSwim.setXYZ(n, phase % TAU, amp, k);   // wrapped: the shared clock is ~1e9 s
+  // Placements are gathered first, then written with the ones that reach the surface in front: the
+  // undersea pass (shadows under the water) draws every animal, the main pass only those in front,
+  // since the opaque sea hides the rest. Most animals are under water most of the time.
+  const pending = Object.fromEntries(Object.keys(SPECIES).map(key => [key, []]));
+  function place(key, x, y, z, yaw, pitch, roll, phase, amp, k, scale = 1, shown = true) {
+    const list = pending[key];
+    if (list.length < SPECIES[key].cap) list.push([x, y, z, yaw, pitch, roll, phase, amp, k, scale, shown]);
+  }
+  function flush() {
+    for (const [key, list] of Object.entries(pending)) {
+      const mesh = meshes[key], swim = mesh.geometry.attributes.aSwim;
+      let n = 0, shown = 0;
+      for (const front of [true, false]) for (const [x, y, z, yaw, pitch, roll, phase, amp, k, scale, vis] of list) {
+        if (vis !== front) continue;
+        e.set(pitch, yaw, roll); q.setFromEuler(e); p.set(x, y, z);
+        m.compose(p, q, scale === 1 ? one : p.clone().set(scale, scale, scale));
+        mesh.setMatrixAt(n, m);
+        swim.setXYZ(n, phase % TAU, amp, k);   // wrapped: the shared clock is ~1e9 s
+        n++; if (front) shown++;
+      }
+      mesh.count = n; mesh.userData.shown = shown; list.length = 0;
+    }
   }
 
   return {
@@ -639,7 +653,7 @@ export function createMarineLife(scene, { renderer = null, water = null } = {}) 
             const texts = { dolphin: '돌고래 무리가 물살을 가르며 지나가요', orca: '범고래 무리의 높은 등지느러미가 보여요', humpback: '혹등고래의 등이 물 위로 드러났어요', turtle: '바다거북이 숨을 쉬러 올라왔어요', manta: '쥐가오리가 물 위로 뛰어올랐어요', flyingfish: '날치 떼가 수면 위를 날아가요' };
             sight(g.id, g.species, distance, t(texts[g.species]), a.x, water + a.y + size * .5, a.z);
           }
-          place(g.species, a.x, water + a.y, a.z, a.yaw, a.pitch, a.roll, a.phase, a.amp, spec.k);
+          place(g.species, a.x, water + a.y, a.z, a.yaw, a.pitch, a.roll, a.phase, a.amp, spec.k, 1, a.y + size * .7 > -.8);
           visible++;
         }
         // Seabirds wheel over busy water: dolphin pods and flying-fish shoals.
@@ -666,10 +680,12 @@ export function createMarineLife(scene, { renderer = null, water = null } = {}) 
           place('gull', bx, alt, bz, b % 2 ? -a : -a + Math.PI, 0, b % 2 ? -.3 : .3, T * 14 + b, Math.sin(T * .7 + b * 2) > 0 ? .5 : .05, 0);
         }
       }
+      flush();
       for (const mesh of Object.values(meshes)) { mesh.instanceMatrix.needsUpdate = true; mesh.geometry.attributes.aSwim.needsUpdate = true; }
       spray.update(dt); ripples.update(dt, waveT);
       swimTime.value = waveT;
       undersea?.update(camera, waveT);
+      for (const mesh of Object.values(meshes)) mesh.count = mesh.userData.shown;   // main pass: only what can show
       for (const [key, s] of surfaced) if (s.seen !== frame) surfaced.delete(key);
       frame++;
       seen = sighted.size;

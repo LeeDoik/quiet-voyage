@@ -13,7 +13,9 @@ npm install          # wrangler (처음 한 번)
 npm run dev          # http://localhost:8787 — 게임 + 멀티플레이 서버
 npm test             # 결정론적 항해·바람·동행 테스트
 npx wrangler login   # 처음 한 번
-npm run deploy       # Cloudflare에 배포
+npm run deploy:staging  # 테스트용 Worker(quiet-voyage-staging)에 배포
+npm run bots         # staging에 디버그 배(내 배를 찾아 따라다님, 기본 48척·10분)
+npm run deploy       # Cloudflare에 배포(프로덕션)
 ```
 
 배포한 뒤 Cloudflare 대시보드 → Workers & Pages → `quiet-voyage` → Settings → Domains에서 내 도메인을 연결합니다.
@@ -23,8 +25,9 @@ npm run deploy       # Cloudflare에 배포
 ```bash
 # 로컬: .dev.vars (git에 올라가지 않음)에 한 줄
 TYPESAFE_API_KEY=...
-# 배포: 한 번 등록
+# 배포: 환경마다 한 번 등록
 npx wrangler secret put TYPESAFE_API_KEY
+npx wrangler secret put TYPESAFE_API_KEY --env staging
 ```
 
 - 서버를 다른 주소에 둘 때는 `public/index.html`의 `<meta name="sea-server">`에 `wss://.../ws`를 넣습니다. 비워 두면 같은 주소의 `/ws`를 쓰고, `off`로 두면 멀티플레이가 꺼집니다.
@@ -56,8 +59,13 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 | `public/src/dolphin-ride.js` | 돌고래가 뱃머리 물결을 타고 놓아주는 규칙 |
 | `public/src/interface.js`, `touch.js`, `logbook.js` | HUD, 터치 조작, 항해 기록 |
 | `public/assets/fonts/`, `tools/fonts.mjs` | HUD 글꼴 서브셋(OFL)과 그것을 다시 만드는 도구. 게임 글자가 바뀌면 `node tools/fonts.mjs` |
-| `public/src/social.js`, `net/sea-net.js` | 멀티플레이 클라이언트 |
+| `public/src/social.js`, `net/sea-net.js` | 멀티플레이 클라이언트(배가 서서히 나타나고 사라짐, 늦은 스냅샷 이어 그리기) |
+| `public/src/far-sails.js` | 800 m 밖 다른 배를 수평선의 먼 등불로 |
+| `public/src/quality.js` | 품질 단계(high/medium/low, `?quality=`) |
+| `public/src/terrain-material.js`, `assets/textures/terrain/` | 섬과 만의 사진 텍스처 지형(CC0, Poly Haven) |
+| `public/src/reflection.js` | 섬과 배가 비치는 물 반사(high) |
 | `server/worker.js` | 정적 파일 + `/ws` → 셀 Durable Object |
+| `tools/sea-bots.mjs` | 디버그 배: 내 배를 찾아 주변을 따라다님(`npm run bots`, staging 전용) |
 | `public/vendor/` | three.js 0.185.1 (MIT) |
 
 ## 세계
@@ -72,7 +80,7 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 - 날씨는 200초 단위로 바뀐다(맑음, 산들바람, 돌풍, 비, 해무). 돌풍과 비는 실제 바람 세기를 바꾸고(`sea.js`의 `env.gust`), 비가 그친 뒤에는 해를 등진 쪽에 무지개가 뜬다. 날씨도 서버 시계를 따른다.
 - 항적은 배가 실제로 지나간 길을 따라 깔리는 리본 메시다(`sailing.js`). 켈빈 각(19.5°)으로 벌어지며 메시 하나로 그린다. 바다 셰이더는 잔물결 방향을 황금각으로 흩어 줄무늬를 없앴고, 픽셀보다 가는 옥타브와 먼 섬의 계산은 건너뛴다.
 - 소리(`public/src/audio.js`)는 파일 없이 합성하고, 화면에 보이는 것에서만 난다. 음악은 없다. 낮은 너울, 겉보기 바람, 속도에 따라 커지는 뱃전 물소리, 배의 실제 흔들림을 따르는 찰랑임과 삐걱임, 맞바람에 떠는 돛, 비와 갑판의 빗방울, 해안 200 m 안의 파도 소리가 깔린다. 고래·갈매기·돌고래 소리는 카메라 기준으로 좌우가 나뉘고 멀수록 작고 어두워진다. M으로 끄고 켠다(이 브라우저에 기억).
-- 병 편지(`public/src/bottles.js`): 바다 곳곳에 오래된 병이 떠 있다. 온라인에서는 정해진 문구 8개 중 하나를 고르거나 60자까지 직접 써서 병을 띄우면 서버가 셀마다 최대 40개를 7일 동안 보관한다. 직접 쓴 편지는 Jev 검사(`server/moderate.js`)를 통과해야 뜬다.
+- 병 편지(`public/src/bottles.js`): 바다 곳곳에 오래된 병이 떠 있다. 온라인에서는 정해진 문구 8개 중 하나를 고르거나 60자까지 직접 써서 병을 띄우면 서버가 셀마다 최대 100개를 30일 동안 보관한다. 직접 쓴 편지는 Jev 검사(`server/moderate.js`)를 통과해야 뜬다.
 
 ## 항해 노트
 
@@ -89,12 +97,13 @@ world (반경 30 km)
      └─ 채널 1…64  →  Durable Object  "채널:cx:cz"
 ```
 
-- **셀**: 바다를 2 km 정사각형으로 나눕니다. 배는 자기가 있는 셀에 자신을 게시(`own`)하고, 경계에서 450 m 안쪽으로 다가온 이웃 셀은 구독(`watch`)만 합니다. 600 m 넘게 멀어지면 구독을 닫습니다(히스테리시스). 경계를 넘을 때는 재접속 없이 두 소켓의 역할만 바꿉니다. 한 플레이어가 여는 소켓은 최대 4개입니다.
+- **셀**: 바다를 2 km 정사각형으로 나눕니다. 배는 자기가 있는 셀에 자신을 게시(`own`)하고, 경계에서 850 m 안쪽의 이웃 셀은 구독(`watch`)만 합니다(시야 800 m보다 넓어서 경계 너머 배도 같은 거리에서 보입니다). 1000 m 넘게 멀어지면 구독을 닫습니다(히스테리시스). 구독한 셀에는 위치를 초당 2번만 보냅니다. 경계를 넘을 때는 재접속 없이 두 소켓의 역할만 바꿉니다. 한 플레이어가 여는 소켓은 최대 4개입니다.
 - **채널**: 한 셀에 게시된 배가 200척이 되면 서버가 `full`을 보내고, 클라이언트는 모든 소켓을 다음 채널로 옮깁니다. 같은 채널끼리만 서로 보입니다. 그래서 한 Durable Object가 맡는 부하에 상한이 생깁니다.
 - **관심 영역(AOI)**: 10 Hz 틱마다 200 m 공간 해시로 각 시청자 주변 800 m 안의 가장 가까운 48척만 골라 보냅니다. 스냅샷은 바이너리로 한 척당 17바이트, 48척이면 약 0.8 KB/틱입니다.
-- **보간**: 클라이언트는 서버 시각을 추정해 150 ms 뒤의 위치를 보간해 그립니다. 2초 동안 스냅샷에 나오지 않은 배는 지웁니다. 화면에는 가장 가까운 64척만 그립니다. 다른 배 위에 이름표는 띄우지 않습니다.
+- **보간**: 클라이언트는 서버 시각을 추정해 150 ms 뒤의 위치를 보간해 그립니다. 스냅샷이 늦으면 마지막 움직임을 따라 최대 0.4초 이어 그립니다. 2초 동안 스냅샷에 나오지 않은 배는 흘러가며 흐려지다 사라집니다.
+- **먼 등불**: 1초마다 시청자 800 m 밖의 게시된 배(가까운 순 32척)를 위치만 보냅니다(`[u8 3][u16 n]` + n × `[u32 id][f32 x][f32 z]`). 화면에는 가장 가까운 64척만 그립니다. 다른 배 위에 이름표는 띄우지 않습니다.
 - **공유 시계**: `welcome`과 스냅샷에 실린 서버 시각으로 `social.clock()`이 모든 플레이어에게 같은 초를 돌려줍니다. 낮밤과 해양 생물 동기화에 씁니다.
-- **휴면**: Hibernation WebSocket API를 씁니다. 셀에 아무도 없으면 틱이 멈추고 객체가 잠듭니다.
+- **휴면**: Hibernation WebSocket API를 씁니다. 셀에 게시된 배가 없으면(구독만 걸려 있어도) 틱이 멈추고 객체가 잠듭니다. 10초 동안 아무 메시지도 보내지 않은 소켓은 4408로 끊습니다(사라진 클라이언트가 멈춘 배로 남지 않게). 클라이언트는 게임이 다시 위치를 보낼 때 다시 붙습니다.
 
 ## 프로토콜
 
@@ -104,6 +113,7 @@ world (반경 30 km)
 | C→S | 바이너리 14 B | `[u8 1][f32 x][f32 z][i16 y·100][u16 yaw][u8 speed·4]`, 최대 15 Hz |
 | S→C | 텍스트 | `welcome {time,channel,cell}`, `info {id,name,quiet}` (처음 보일 때), `quiet {id,p}`, `leave {id}`, `full` |
 | S→C | 바이너리 | `[u8 2][f64 서버ms][u16 n]` + n × `[u32 id][f32 x][f32 z][i16 y][u16 yaw][u8 speed]` |
+| S→C | 바이너리 | 먼 배 `[u8 3][u16 n]` + n × `[u32 id][f32 x][f32 z]`, 1 Hz |
 
 ## 제한
 
@@ -123,4 +133,4 @@ world (반경 30 km)
 
 ## 병 편지
 
-`{t:'bottle', p}`의 p는 문구 번호 0–7만 받는다(자유 텍스트 없음). 세션당 30초에 한 번까지 허용하고, 셀(Durable Object)의 storage에 최대 40개를 7일간 보관한다. 접속 시 `{t:'bottles', list}`를 보내고, 새 병이 생기면 셀의 모든 소켓에 다시 보낸다. 병은 채널마다 따로 보관된다(shortcut: 채널 간 공유가 필요하면 셀 단위 저장 DO를 따로 둘 것).
+`{t:'bottle', p}`의 p는 문구 번호 0–7, `{t:'bottle', text}`는 직접 쓴 60자 이하 편지(Jev 검사 통과 시)다. 세션당 30초에 한 번까지 허용하고, 셀(Durable Object)의 storage에 최대 100개를 30일간 보관한다. 접속 시 `{t:'bottles', list}`를 보내고, 새 병이 생기면 셀의 모든 소켓에 다시 보낸다. 병은 채널마다 따로 보관된다(shortcut: 채널 간 공유가 필요하면 셀 단위 저장 DO를 따로 둘 것).

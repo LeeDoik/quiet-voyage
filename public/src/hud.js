@@ -131,6 +131,7 @@ function createOverlay() {
     transparent: true,
     depthTest: false,
     depthWrite: false,
+    toneMapped: false,   // the paper and ink keep their exact colours under the scene's filmic tone mapping
   });
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
   quad.name = "studio-hud";

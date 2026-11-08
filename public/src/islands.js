@@ -9,11 +9,19 @@ import { bakeTexture, makeRng, triplanar, standardMaterial } from './materials.j
 import { makeTree, makeTrunk, makeCanopy, foliageMaterial } from './foliage.js';
 import { islandsNear, coastFactor, islandDistance, HOME_ISLANDS } from './world-gen.js';
 import { decorate, decorClock } from './island-decor.js';
+import { createTerrainMaterial } from './terrain-material.js';
+import { quality } from './quality.js';
 
 const LOAD = 1900, UNLOAD = 2400, TREE_RANGE = 1150;
 const REACH = 220;   // a light pulse this close to an island's coast wakes it
 const CLEAR_TOP = new Set(['pavilion', 'ruins', 'observatory', 'windmill', 'lighthouse']);
-const RINGS = [0, .06, .12, .18, .24, .3, .36, .42, .48, .54, .6, .65, .7, .75, .79, .83, .865, .895, .92, .945, .965, .983, 1, 1.03, 1.08, 1.16, 1.3];
+const BASE_RINGS = [0, .06, .12, .18, .24, .3, .36, .42, .48, .54, .6, .65, .7, .75, .79, .83, .865, .895, .92, .945, .965, .983, 1, 1.03, 1.08, 1.16, 1.3];
+// Close up, higher tiers swap in a finer mesh: a ring between each pair and more points round each
+// ring, for smoother slopes and silhouettes. The coastline ring (t = 1) is the same either way, so
+// collisions never change. FINE_NEAR/FINE_FAR: metres from the coast to swap in and back (hysteresis).
+const FINE_RINGS = BASE_RINGS.flatMap((t, i) => i ? [(BASE_RINGS[i - 1] + t) / 2, t] : [t]);
+const FINE = quality.terrainDetail > 1, FINE_NEAR = 450, FINE_FAR = 650;
+const SHADOWS = quality.shadowMap > 0;
 
 function hash(x, z, seed) {
   const s = Math.sin(x * 127.1 + z * 311.7 + seed * 74.7) * 43758.5453;
@@ -50,8 +58,7 @@ export function terrainHeight(s, t, lx, lz) {
 let terrainMaterial = null, barkMaterial = null, leafMaterials = null, towerMaterial = null, lampMaterial = null, beamMaterial = null, beamGeometry = null;
 function materials() {
   if (terrainMaterial) return;
-  const baked = bakeTexture({ kind: 'stone', seed: 41, palette: [0xd9d9d6, 0xc4c4c0, 0xececea], size: 256 });
-  terrainMaterial = triplanar(new THREE.MeshStandardMaterial({ vertexColors: true, map: baked.map, roughness: .96, metalness: 0 }), { scale: .09 });
+  terrainMaterial = createTerrainMaterial();
   terrainMaterial.name = 'island terrain';
   barkMaterial = standardMaterial({ kind: 'wood', seed: 93, palette: [0x3b2f24, 0x5a4a3a, 0x746152], repeat: 2, roughness: .96, metalness: 0 });
   leafMaterials = {
@@ -71,7 +78,8 @@ function materials() {
 
 // A few tree templates, each flattened to one geometry per material in tree space.
 let templates = null;
-function flatten(group) {
+/** Merge a group's meshes into one geometry per material (non-indexed, position/normal/uv/color). */
+export function flatten(group) {
   group.updateMatrixWorld(true);
   const parts = new Map();
   group.traverse(mesh => {
@@ -86,12 +94,12 @@ function flatten(group) {
 function treeTemplates() {
   if (templates) return templates;
   materials();
-  const broad = [0, 1, 2].map(i => flatten(makeTree({ height: 6 + i * 1.6, spread: 3.6 + i * .5, seed: 300 + i, kind: 'broadleaf', bark: barkMaterial, leaf: leafMaterials.broadleaf })));
-  const needle = [0, 1].map(i => flatten(makeTree({ height: 8 + i * 2.5, spread: 3 + i * .4, seed: 400 + i, kind: 'needle', bark: barkMaterial, leaf: leafMaterials.needle })));
+  const broad = [0, 1, 2].map(i => flatten(makeTree({ height: 6 + i * 1.6, spread: 3.6 + i * .5, seed: 300 + i, kind: 'broadleaf', bark: barkMaterial, leaf: leafMaterials.broadleaf, light: true })));
+  const needle = [0, 1].map(i => flatten(makeTree({ height: 8 + i * 2.5, spread: 3 + i * .4, seed: 400 + i, kind: 'needle', bark: barkMaterial, leaf: leafMaterials.needle, light: true })));
   const palm = [0, 1].map(i => {
     const g = new THREE.Group();
     const h = 6.5 + i * 1.8;
-    g.add(makeTrunk({ height: h, radius: .2, seed: 500 + i, material: barkMaterial, limbs: 0, lean: .22 }));
+    g.add(makeTrunk({ height: h, radius: .2, seed: 500 + i, material: barkMaterial, limbs: 0, lean: .22, light: true }));
     const crown = makeCanopy({ radius: 2.6, cards: 16, seed: 510 + i, material: leafMaterials.palm, squash: .32 });
     crown.position.set(h * .2, h, 0); g.add(crown);
     return flatten(g);
@@ -100,10 +108,11 @@ function treeTemplates() {
   return templates;
 }
 
-function buildTerrain(s) {
+function terrainGeometry(s, fine) {
+  const RINGS = fine ? FINE_RINGS : BASE_RINGS;
   const perimeter = Math.PI * (s.rx + s.rz);
-  const S = Math.max(48, Math.min(168, Math.round(perimeter / 4.5)));
-  const R = RINGS.length, positions = new Float32Array(R * S * 3), colors = new Float32Array(R * S * 3);
+  const S = Math.max(48, Math.min(fine ? 280 : 168, Math.round(perimeter / (fine ? 2.8 : 4.5))));
+  const R = RINGS.length, positions = new Float32Array(R * S * 3), colors = new Float32Array(R * S * 3), blends = new Float32Array(R * S * 4);
   const c = Math.cos(s.rot), n = Math.sin(s.rot);
   for (let r = 0; r < R; r++) for (let j = 0; j < S; j++) {
     const a = j / S * Math.PI * 2, t = RINGS[r], f = coastFactor(s, a);
@@ -129,12 +138,18 @@ function buildTerrain(s) {
     const v = fbm(x * .06, z * .06, 17), g = fbm(x * .02, z * .02, 29);
     const dry = smooth(.55, .75, fbm(x * .035, z * .035, 41));          // sunburnt, yellower patches
     const grass = [.37 + .1 * g + .12 * dry, .53 + .1 * v + .02 * dry, .3 + .05 * g - .04 * dry];
-    let mixRock = Math.max(smooth(.28, .55, slope), s.kind === 'rock' ? .75 : 0, s.kind === 'volcano' ? smooth(s.height * .45, s.height * .7, y) : 0);
+    // Bare rock where it is steep, broken into outcrops by noise so it never runs as one even band.
+    const outcrop = smooth(.35, .7, fbm(x * .045 + 3.1, z * .045 - 1.7, 61) + .25 * fbm(x * .15, z * .15, 67));
+    let mixRock = Math.max(smooth(.3, .62, slope) * (.35 + .65 * outcrop), smooth(.5, .75, slope), s.kind === 'rock' ? .75 : 0, s.kind === 'volcano' ? smooth(s.height * .45, s.height * .7, y) : 0);
     if (s.kind === 'atoll' || s.kind === 'sandbar') mixRock *= .3;
     const sandy = s.kind === 'sandbar' ? 1 : smooth(2.2, 1.0, y) * (s.kind === 'atoll' ? 1 : .95);
     let rgb = grass.map((g0, k) => g0 + (rock[k] - g0) * mixRock);
     rgb = rgb.map((c0, k) => c0 + (sand[k] - c0) * sandy);
-    if (y < .45) rgb = rgb.map((c0, k) => c0 + (wet[k] - c0) * Math.min(1, smooth(.45, -.1, y) * .55 + Math.max(0, -y / 2)));
+    const wetness = y < .45 ? Math.min(1, smooth(.45, -.1, y) * .55 + Math.max(0, -y / 2)) : 0;
+    if (wetness > 0) rgb = rgb.map((c0, k) => c0 + (wet[k] - c0) * wetness);
+    // Photo layers for terrain-material.js: grass, rock, sand, wet shore (they sum to 1).
+    const shore = Math.min(1, wetness * 1.6 + (s.kind === 'sandbar' ? 0 : smooth(1.2, .4, y) * .5)), dryLand = 1 - shore;
+    blends.set([(1 - mixRock) * (1 - sandy) * dryLand, mixRock * (1 - sandy) * dryLand, sandy * dryLand, shore], i * 4);
     if (s.concept === 'birds' && y > .6) rgb = rgb.map(c0 => c0 + (.93 - c0) * .75 * smooth(.45, .7, fbm(x * .3, z * .9, 51)));   // guano
     if (s.kind === 'volcano') rgb = rgb.map((c0, k) => c0 + ([.24, .22, .21][k] - c0) * smooth(s.height * .55, s.height * .8, y));      // ash near the top
     const shade = .9 + .2 * v;
@@ -142,9 +157,16 @@ function buildTerrain(s) {
     colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('blend', new THREE.BufferAttribute(blends, 4));
   geometry.computeBoundingSphere();
-  const mesh = new THREE.Mesh(geometry, terrainMaterial);
+  return geometry;
+}
+
+function buildTerrain(s) {
+  const mesh = new THREE.Mesh(terrainGeometry(s, false), terrainMaterial);
   mesh.userData.tag = 'island-terrain';
+  mesh.userData.coarse = mesh.geometry; mesh.userData.fine = null;
+  mesh.castShadow = mesh.receiveShadow = SHADOWS;
   return mesh;
 }
 
@@ -167,7 +189,8 @@ function buildTrees(s) {
     const u = Math.cos(a) * s.rx * f * t, v = Math.sin(a) * s.rz * f * t;
     top = Math.max(top, localHeight(s, u * Math.cos(s.rot) - v * Math.sin(s.rot), u * Math.sin(s.rot) + v * Math.cos(s.rot)).h);
   }
-  for (let attempt = 0; attempt < s.trees * 5 && placed < s.trees; attempt++) {
+  const wanted = Math.round(s.trees * quality.treeDensity);
+  for (let attempt = 0; attempt < wanted * 5 && placed < wanted; attempt++) {
     const a = rng() * Math.PI * 2, t = Math.sqrt(rng()) * (s.kind === 'atoll' ? .8 : .78), f = coastFactor(s, a);
     const u = Math.cos(a) * s.rx * f * t, v = Math.sin(a) * s.rz * f * t;
     const x = u * Math.cos(s.rot) - v * Math.sin(s.rot), z = u * Math.sin(s.rot) + v * Math.cos(s.rot);
@@ -188,6 +211,7 @@ function buildTrees(s) {
   for (const [material, list] of byMaterial) {
     const mesh = new THREE.Mesh(mergeGeometries(list, false), material);
     mesh.userData.tag = material.userData.foliage ? 'foliage' : 'trunk';
+    mesh.castShadow = mesh.receiveShadow = SHADOWS;
     group.add(mesh); list.forEach(g => g.dispose());
   }
   return group;
@@ -221,7 +245,8 @@ export function buildIsland(s) {
   materials();
   const group = new THREE.Group();
   group.position.set(s.x, 0, s.z); group.userData.tag = 'island'; group.userData.island = s.id;
-  group.add(buildTerrain(s));
+  const terrain = buildTerrain(s);
+  group.add(terrain); group.userData.terrain = terrain;
   const trees = buildTrees(s); if (trees) group.add(trees);
   if (s.landmark === 'lighthouse') { const l = buildLighthouse(s); group.add(l); group.userData.beam = l.userData.beam; }
   const c = Math.cos(s.rot), n = Math.sin(s.rot);
@@ -238,6 +263,8 @@ export function buildIsland(s) {
 
 function dispose(group) {
   group.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
+  const t = group.userData.terrain;
+  if (t) { t.userData.coarse?.dispose(); t.userData.fine?.dispose(); }
 }
 
 export function createIslands(scene) {
@@ -282,8 +309,18 @@ export function createIslands(scene) {
       stats.loaded = live.size; stats.queued = queue.length;
     },
     prepare(camera, frustum) {
+      let built = false;
       for (const { spec, group } of live.values()) {
-        const near = Math.hypot(camera.position.x - spec.x, camera.position.z - spec.z) - Math.max(spec.rx, spec.rz) < TREE_RANGE;
+        const coast = Math.hypot(camera.position.x - spec.x, camera.position.z - spec.z) - Math.max(spec.rx, spec.rz);
+        const near = coast < TREE_RANGE, terrain = group.userData.terrain;
+        if (FINE && terrain) {
+          const fine = terrain.geometry === terrain.userData.fine;
+          // At most one fine mesh is built a frame, so sailing up to a cluster never stalls.
+          if (!fine && coast < FINE_NEAR && (terrain.userData.fine || !built)) {
+            if (!terrain.userData.fine) { terrain.userData.fine = terrainGeometry(spec, true); built = true; }
+            terrain.geometry = terrain.userData.fine;
+          } else if (fine && coast > FINE_FAR) terrain.geometry = terrain.userData.coarse;
+        }
         if (group.userData.trees) group.userData.trees.visible = near;
         if (group.userData.decor) group.userData.decor.visible = near;
       }

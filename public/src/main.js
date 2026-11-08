@@ -5,11 +5,13 @@ import { createSailing } from './sailing.js';
 import { createInterface } from './interface.js';
 import { createSocial } from './social.js';
 import { createFarSails } from './far-sails.js';
+import { createReflection } from './reflection.js';
 import { createVisibility } from './visibility.js';
 import { createBots } from './bots.js';
 import { createPerformance } from './performance.js';
 import { createGraphics } from './graphics.js';
 import { platform } from './platform.js';
+import { quality } from './quality.js';
 import { createTouch } from './touch.js';
 import { createFullscreen } from './fullscreen.js';
 import { createSettings } from './settings.js';
@@ -24,18 +26,24 @@ import { lang, t } from './i18n.js';
 document.documentElement.lang=lang; document.title=t('함께 항해');
 
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
+if(quality.shadowMap){renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;}
+// Filmic tone mapping: bright sun glints roll off instead of clipping, and the sea and sky gain depth.
+// ?tone=none shows the old linear output for comparison.
+if(new URLSearchParams(location.search).get('tone')!=='none'){renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;}
 const scene=new THREE.Scene(); const camera=new THREE.PerspectiveCamera(50,1,.1,2000);
 function resize(){renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.fov=innerHeight>innerWidth?66:50;camera.updateProjectionMatrix();} addEventListener('resize',resize); resize();
 const world=createWorld(scene,renderer), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene), farSails=createFarSails(scene);
 let phase='menu', demoMode=false;
 const bots=createBots(scene),visibility=createVisibility(scene,camera);
 const graphics=createGraphics(renderer,scene);
+const reflection=createReflection(renderer,scene,camera,world.waterUniforms);
 let benchOptimized=null;
 function renderScene(){
   const optimized=benchOptimized??performanceTest.optimized();
   const frustum=visibility.prepare(optimized);
   world.prepare(camera,frustum,sailing.state(),optimized);
   social.prepare(camera,frustum,optimized);bots.prepare(camera,frustum,optimized);
+  reflection.render();
   renderer.render(scene,camera);performanceTest.draw();
   if(benchOptimized===null)graphics.frame();
 }
