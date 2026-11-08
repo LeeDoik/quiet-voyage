@@ -7,22 +7,28 @@ import { createWake } from './wake.js';
 import { createFloat } from './boat-float.js';
 import { createBoatLantern } from './lantern.js';
 import { createAutopilot } from './autopilot.js';
+import { quality } from './quality.js';
 
 export function createSailing(scene, camera) {
   const boat = new THREE.Group();
   boat.userData.tag = 'boat';
   scene.add(boat);
   const lantern=createBoatLantern(scene);
-  let rig=null, sailAngle=0, turnInput=0;
-  const modelPath = '../assets/blender/bbf5d549-092f-449a-832f-63aa96039093/model.glb';
+  let rig=null, rudderPivot=null, sailAngle=0, turnInput=0;
+  // Built by tools/blender/boat.py (npm run boat). Only the sails are two-sided; every other part is
+  // closed and faces out, so its back faces are skipped.
+  const modelPath = '../assets/blender/boat/boat.glb';
   new GLTFLoader().load(new URL(modelPath, import.meta.url).href, ({ scene: model }) => {
     model.rotation.y = Math.PI / 2;
     model.traverse(object => {
       if (!object.isMesh) return;
-      object.userData.tag = /sail|jib/i.test(object.name) ? 'sail' : /hull/i.test(object.name) ? 'hull' : 'boat-detail';
-      object.material.side = THREE.DoubleSide;
+      const sail=/sail|jib/i.test(object.name);
+      object.userData.tag = sail ? 'sail' : /hull/i.test(object.name) ? 'hull' : 'boat-detail';
+      object.material.side = sail ? THREE.DoubleSide : THREE.FrontSide;
+      object.castShadow = object.receiveShadow = quality.shadowMap > 0;
     });
     rig=createWindRig(model);
+    rudderPivot=model.getObjectByName('rudder');
     boat.add(model,lantern.body,lantern.glow);
   });
 
@@ -48,6 +54,9 @@ export function createSailing(scene, camera) {
     ({y:height,pitch,roll}=float.step(dt,x,z,yaw,speed,t,rudder));
     boat.position.set(x,height,z);boat.rotation.set(pitch,yaw,roll,'YXZ');
     sailAngle=rig?.update(dt,sailWind(yaw,speed,t),t)??0;
+    // Blade and tiller turn together on the rudder stock: helm to port swings the blade's trailing
+    // edge to port (-Z in the model) and the tiller to starboard.
+    if(rudderPivot)rudderPivot.rotation.y=-.55*rudder;
     lantern.update(dt,t,boat);
     wake.update(dt,x,z,yaw,speed,t);
     // Low enough that the horizon sits a third of the way down: the sky is half the picture of a voyage.

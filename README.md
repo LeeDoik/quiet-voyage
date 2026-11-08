@@ -51,7 +51,8 @@ W/↑ 빠르게, S/↓ 천천히, A·D/←·→ 방향, J 항해 노트, K 바�
 | `public/src/world-gen.js` | 청크 단위 결정론적 섬·생물·병 생성 |
 | `public/src/islands.js`, `marine-life.js`, `bottles.js` | 스트리밍 섬, 해양 생물, 병 편지 |
 | `public/src/sailing.js`, `sea.js` | 배, 바람, 파도, 항적, 충돌 |
-| `public/src/boat-float.js`, `wake.js`, `wind-rig.js` | 물에 뜨는 방식(스프링 부력, 바람에 기울기), 항적 리본, 바람에 부푸는 돛. 내 배와 다른 배가 함께 쓴다 |
+| `public/src/boat-float.js`, `wake.js`, `wind-rig.js` | 물에 뜨는 방식(스프링 부력, 바람에 기울기), 항적 리본, 마스트·포스테이에 걸려 바람에 부푸는 돛과 붐·메인시트. 내 배와 다른 배가 함께 쓴다 |
+| `tools/blender/boat.py` → `public/assets/blender/boat/boat.glb` | 배 모델(선체, 조종석, 리깅, 러더, 돛, 텍스처). 고친 뒤 `npm run boat` |
 | `public/src/ocean-material.js`, `wave-field.js` | 바다 셰이더(너울, 잔물결, 반사, 선체 주변 물결), CPU와 같은 너울 식 |
 | `public/src/sky.js`, `motes.js` | 하늘 돔과 바다 반사가 함께 쓰는 하늘(노을, 구름, 은하수, 별똥별, 오로라), 밤 수면 위의 빛 입자 |
 | `public/src/lantern.js` | 배마다 선미 등불(밤에 켜짐, 내 배만 실제 조명 1개) |
