@@ -4,6 +4,7 @@ import { createWorld } from './world.js';
 import { createSailing } from './sailing.js';
 import { createInterface } from './interface.js';
 import { createSocial } from './social.js';
+import { createFarSails } from './far-sails.js';
 import { createVisibility } from './visibility.js';
 import { createBots } from './bots.js';
 import { createPerformance } from './performance.js';
@@ -25,7 +26,7 @@ document.documentElement.lang=lang; document.title=t('함께 항해');
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
 const scene=new THREE.Scene(); const camera=new THREE.PerspectiveCamera(50,1,.1,2000);
 function resize(){renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.fov=innerHeight>innerWidth?66:50;camera.updateProjectionMatrix();} addEventListener('resize',resize); resize();
-const world=createWorld(scene,renderer), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene);
+const world=createWorld(scene,renderer), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene), farSails=createFarSails(scene);
 let phase='menu', demoMode=false;
 const bots=createBots(scene),visibility=createVisibility(scene,camera);
 const graphics=createGraphics(renderer,scene);
@@ -78,7 +79,7 @@ if(platform.dev)window.__sea={scene,camera,renderer,sailing,world,social,logbook
 // Layout facts for the HUD: aspect, a text boost for small screens, and `unit` — the fraction of
 // the frame height one design pixel of text occupies (the HUD scales text by the buffer size).
 function view(){const w=innerWidth,h=innerHeight,b=renderer.getDrawingBufferSize(new THREE.Vector2());return {aspect:w/h,portrait:h>w,k:Math.min(1.9,Math.max(1,640/Math.min(w,h))),unit:Math.max(1,Math.min(b.x,b.y)/720)/b.y};}
-function reset(seed=1){phase='menu';demoMode=false;world.reset(seed);sailing.reset(seed);ui.reset(seed);social.reset(seed);logbook.reset();bottles.reset();photo.on=false;bots.reset(performanceTest.botCount(),{x:0,z:0});spawn();}
+function reset(seed=1){phase='menu';demoMode=false;world.reset(seed);sailing.reset(seed);ui.reset(seed);social.reset(seed);farSails.reset();logbook.reset();bottles.reset();photo.on=false;bots.reset(performanceTest.botCount(),{x:0,z:0});spawn();}
 function snapshot(){return {phase,boat:sailing.state(),world:world.state(),social:social.state(),performance:performanceTest.state(),graphics:graphics.state(),visibility:visibility.state(),water:world.renderState(),bots:bots.state(),log:logbook.state(),bottles:bottles.state(),photo:photo.on?{time:photo.time,saved:photo.saved}:null,touch:touch.state(),fullscreen:fullscreen.state(),settings:phase==='playing'&&!demoMode?settings.state():null,sound:sfx.state(),view:view()};}
 const cameras={default(){}, boat(){const b=sailing.state();camera.position.set(b.x+8,5,b.z+10);camera.lookAt(b.x,2,b.z);}, horizon(){const b=sailing.state();camera.position.set(b.x,8,b.z+16);camera.lookAt(b.x,2,b.z-150);}};
 function stageVoyage() {
@@ -164,7 +165,7 @@ installStudio({canvas:renderer.domElement,scene,renderer,camera,eyeUsesRenderCam
   if(phase==='playing'){
     const controls=demoMode?{...input,keys:new Set(['KeyW'])}:photo.on?{...input,keys:new Set(),wheel:{x:0,y:0}}:input;
     sailing.update(dt,controls);
-    if(!demoMode){social.update(dt,input,sailing.state(),world.state().time);for(const p of social.pulses()){const r=world.respond(p);if(r?.own)logbook.reply(r.spec);}}
+    if(!demoMode){social.update(dt,input,sailing.state(),world.state().time);farSails.update(dt,social.far(),world.state().time,renderer.getPixelRatio());for(const p of social.pulses()){const r=world.respond(p);if(r?.own)logbook.reply(r.spec);}}
     world.vessels(social.vessels());world.update(dt,sailing.state(),shared,camera);bots.update(dt);
   }else if(!demoMode){sailing.idle(dt);world.update(dt,sailing.state(),shared,camera);}
   if(photo.on)photoCamera(dt,input.keys,input.wheel);

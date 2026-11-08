@@ -14,6 +14,8 @@ const validPose=s=>s&&[s.x,s.y,s.z].every(v=>Number.isFinite(v)&&Math.abs(v)<1e6
 const webNet=platform.web&&!!platform.server;
 // Other boats carry no name tag: on a quiet sea a sail is enough.
 const MAX_REMOTE=64,WAKES=4;
+// Boats come out of the haze and go back into it instead of popping in and out (seconds).
+const FADE_IN=1.6,FADE_OUT=1.4;
 // [Korean, English] pairs: one pick, so a name means the same thing in both. English stays ≤16 chars ("the " + 6 + " " + 5).
 const NAME_FIRST=[['푸른','Blue'],['고요한','Still'],['은빛','Silver'],['작은','Little'],['먼','Far'],['바람의','Windy'],['노을빛','Rosy'],['새벽','Dawn'],['달빛','Moon'],['하얀','White'],['잔잔한','Calm'],['소금빛','Salt'],['별빛','Bright'],['따뜻한','Warm'],['느린','Slow'],['맑은','Clear']];
 const NAME_SECOND=[['물새','Tern'],['고래','Whale'],['돛','Sail'],['파도','Wave'],['별','Star'],['등대','Light'],['갈매기','Gull'],['산호','Coral'],['물결','Swell'],['바람','Wind'],['섬','Isle'],['구름','Cloud'],['해초','Kelp'],['조개','Shell'],['수평선','Tide'],['나침반','North']];
@@ -52,8 +54,39 @@ export function createSocial(scene) {
   }
   for(const w of wakes)w.wake.mesh.visible=false;
   function makeBoat(tag){const source=scene.children.find(o=>o.userData.tag==='boat');const mesh=source&&createVesselLOD(source,tag);if(mesh)scene.add(mesh);return mesh;}
-  function removeBoat(id){const boat=boats.get(id);if(boat)scene.remove(boat);boats.delete(id);}
-  function clearBoats(){for(const id of boats.keys())removeBoat(id);releaseWakes(new Set());nearest=[];}
+  // Fading needs its own transparent copies of the shared hull materials, only while it lasts;
+  // at full strength the boat goes back to the shared ones (no extra programs or draw state).
+  function setFade(root,v){
+    const d=root.userData;d.fade=v;
+    const glow=root.children.find(o=>o.material?.isShaderMaterial);if(glow)glow.visible=v>.6;
+    if(v>=1){if(d.fadeMats){for(const f of d.fadeMats){f.mesh.material=f.original;f.clone.dispose();}d.fadeMats=null;}return;}
+    if(!d.fadeMats){
+      d.fadeMats=[];
+      root.traverse(mesh=>{
+        if(!mesh.isMesh||Array.isArray(mesh.material)||mesh.material.isShaderMaterial)return;
+        const original=mesh.material,clone=original.clone();clone.transparent=true;
+        mesh.material=clone;d.fadeMats.push({mesh,original,clone});
+      });
+    }
+    for(const f of d.fadeMats)f.clone.opacity=f.original.opacity*v;
+  }
+  function dispose(root){setFade(root,1);scene.remove(root);}
+  const leaving=new Map();   // id → {root, pose}: boats gone from the snapshots, drifting on as they fade
+  function removeBoat(id){
+    const boat=boats.get(id);boats.delete(id);
+    if(!boat)return;
+    const pose=boat.userData.pose;
+    if(pose&&(boat.userData.fade??0)>0)leaving.set(id,{root:boat,pose:{...pose}});else dispose(boat);
+  }
+  function clearBoats(){for(const boat of boats.values())dispose(boat);boats.clear();for(const l of leaving.values())dispose(l.root);leaving.clear();releaseWakes(new Set());nearest=[];}
+  function drift(dt,seaTime){
+    for(const [id,l]of leaving){
+      const v=(l.root.userData.fade??0)-dt/FADE_OUT;
+      if(v<=0){dispose(l.root);leaving.delete(id);continue;}
+      l.pose.x-=Math.sin(l.pose.yaw)*l.pose.speed*dt;l.pose.z-=Math.cos(l.pose.yaw)*l.pose.speed*dt;
+      float(l.root,dt,l.pose,seaTime);setFade(l.root,v);
+    }
+  }
   function endPractice(){practice=false;practiceTime=0;practicePulseAt=3;practiceQuiet.reset();if(practiceBoat)scene.remove(practiceBoat);practiceBoat=null;}
   function watch(live){
     room=live;connected=true;quiet.reset();
@@ -111,13 +144,20 @@ export function createSocial(scene) {
       for(const {id,player}of near){
         const state=player.state,raw=validPose(player.stateRaw)?player.stateRaw:state,pose=peerPose(id,state);
         present.add(id);let remote=boats.get(id);
-        if(!remote){remote=makeBoat('remote-boat');if(remote)boats.set(id,remote);}
+        if(!remote){
+          // Back before it had faded out: pick it up where it is.
+          const back=leaving.get(id);
+          if(back){remote=back.root;leaving.delete(id);}else{remote=makeBoat('remote-boat');if(remote)setFade(remote,0);}
+          if(remote)boats.set(id,remote);
+        }
         if(remote){
           if(platform.web)float(remote,dt,pose,seaTime);else{remote.position.set(state.x,state.y,state.z);remote.quaternion.fromArray(state.q).normalize();}
+          remote.userData.pose=pose;
+          if(remote.userData.fade<1)setFade(remote,Math.min(1,remote.userData.fade+dt/FADE_IN));
         }
         peers.push({...pose,raw:peerPose(id,raw),quiet:raw.quiet});
       }
-      for(const id of boats.keys())if(!present.has(id))removeBoat(id);
+      for(const id of [...boats.keys()])if(!present.has(id))removeBoat(id);
     }else if(practice)peers.push(practicePeer(dt,boat,seaTime));
     nearest=peers.map(p=>({p,d:(p.x-boat.x)**2+(p.z-boat.z)**2})).sort((a,b)=>a.d-b.d).slice(0,WAKES).map(n=>n.p);
     releaseWakes(new Set(nearest.map(p=>p.id)));
@@ -128,6 +168,7 @@ export function createSocial(scene) {
     }
     quiet.update(dt,boat,peers,room?.id||'self');
     if(pressed('KeyE'))quiet.act('pulse',boat);
+    drift(dt,seaTime);
     previous=new Set(input.keys);
     water.update(quiet.visual(),boat,seaTime);
     if(connected&&room){
@@ -145,14 +186,15 @@ export function createSocial(scene) {
     reset(){generation++;if(room)room.leave();room=null;joining=false;connected=false;clearBoats();endPractice();quiet.reset();water.clear();sendClock=0;retry=0;previous.clear();},
     update,
     prepare(camera,frustum,optimized){
-      for(const boat of boats.values()){
-        prepareVessel(boat,camera,frustum,optimized);
-      }
+      for(const boat of boats.values())prepareVessel(boat,camera,frustum,optimized);
+      for(const l of leaving.values())prepareVessel(l.root,camera,frustum,optimized);
       if(practiceBoat)prepareVessel(practiceBoat,camera,frustum,optimized);
     },
     clock(){return connected&&room?.serverTime?room.serverTime():null;},
     /** The nearest other hulls, for the water to part around: [{x, z, yaw, speed}]. */
     vessels(){return nearest;},
+    /** Other boats past the view radius, for the distant lanterns: [{id, x, z}]. */
+    far(){return connected&&room?.far?room.far():[];},
     /** Bottles other sailors floated nearby (web only), minus our own. */
     bottles(){return room?.bottles?room.bottles().filter(b=>b.by!==sessionId):[];},
     dropBottle(p){return !!(connected&&room?.dropBottle?.(p));},

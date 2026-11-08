@@ -16,8 +16,11 @@ const OWN_CAPACITY = 200;               // published players per cell before the
 const MAX_MSGS_PER_SEC = 30;
 const PUBLISH_MARGIN = 300;             // an own player may drift this far past the cell edge
 const TAU = Math.PI * 2;
+const STALE_MS = 10000;                 // a socket silent this long (a vanished client) is dropped, not left frozen
+const FAR_EVERY = 10;                   // ticks between far-sail lists (1 Hz)
+const MAX_FAR = 32;                     // published boats beyond VIEW_RADIUS, nearest first, as distant lanterns
 const BOTTLE_PHRASES = 8;               // src/bottles.js PHRASES.length: preset phrases travel as indices
-const BOTTLE_CAP = 40, BOTTLE_TTL = 7 * 24 * 3600 * 1000, BOTTLE_EVERY = 30000;
+const BOTTLE_CAP = 100, BOTTLE_TTL = 30 * 24 * 3600 * 1000, BOTTLE_EVERY = 30000;
 const LETTER_TRY_EVERY = 4000;          // written letters: one check at a time, at most one every 4 s per socket
 
 function parseCell(url) {
@@ -59,14 +62,21 @@ export class SeaCell extends DurableObject {
       const attachment = ws.deserializeAttachment();
       if (attachment) this.sessions.set(ws, this.session(attachment));
     }
-    if (this.sessions.size) this.startTick();
+    this.ticks = 0;
+    this.wake();
+  }
+
+  // The 10 Hz tick runs only while a boat is published here. A cell that is merely watched across
+  // a border (or empty) keeps no timer, so the object can hibernate and costs nothing.
+  wake() {
+    for (const s of this.sessions.values()) if (this.publishable(s)) return this.startTick();
   }
 
   session(a) {
     return {
       cx: a.cx, cz: a.cz, channel: a.channel, id: a.id ?? null, name: a.name ?? '', own: !!a.own,
       x: a.x ?? null, z: a.z ?? null, y: 0, yaw: 0, speed: 0,
-      quiet: null, seen: new Set(), lastCount: 0, windowStart: 0, windowCount: 0,
+      quiet: null, seen: new Set(), lastCount: 0, farCount: 0, windowStart: 0, windowCount: 0, heardAt: Date.now(),
     };
   }
 
@@ -85,7 +95,6 @@ export class SeaCell extends DurableObject {
     this.persist(server, s);
     server.send(JSON.stringify({ t: 'welcome', time: Date.now(), channel: cell.channel, cell: [cell.cx, cell.cz] }));
     server.send(JSON.stringify({ t: 'bottles', list: await this.bottles() }));
-    this.startTick();
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -105,7 +114,8 @@ export class SeaCell extends DurableObject {
   webSocketMessage(ws, message) {
     const s = this.sessions.get(ws);
     if (!s || this.limited(ws, s)) return;
-    if (typeof message !== 'string') return this.pose(s, message);
+    s.heardAt = Date.now();
+    if (typeof message !== 'string') { this.pose(s, message); if (this.timer === null && this.publishable(s)) this.startTick(); return; }
     if (message.length > 2048) return;
     let msg;
     try { msg = JSON.parse(message); } catch { return; }
@@ -134,6 +144,7 @@ export class SeaCell extends DurableObject {
     s.own = own;
     if (!own) this.announceLeave(ws, s.id);
     this.persist(ws, s);
+    if (own && this.timer === null && this.publishable(s)) this.startTick();
   }
 
   quiet(ws, s, p) {
@@ -211,17 +222,23 @@ export class SeaCell extends DurableObject {
   }
 
   tick() {
-    if (!this.sessions.size) { this.stopTick(); return; }
-    const grid = new Map();
+    const now = Date.now();
+    // A client that vanished without a close (lost signal, sleeping laptop) would otherwise stay
+    // published as a frozen boat; a live client sends its pose many times a second.
+    for (const [ws, s] of this.sessions) if (now - s.heardAt > STALE_MS) this.drop(ws, 4408, 'silent');
+    const grid = new Map(), published = [];
     for (const s of this.sessions.values()) {
       if (!this.publishable(s)) continue;
+      published.push(s);
       const key = `${Math.floor(s.x / GRID)},${Math.floor(s.z / GRID)}`;
       const bucket = grid.get(key);
       if (bucket) bucket.push(s); else grid.set(key, [s]);
     }
-    const now = Date.now(), reach = Math.ceil(VIEW_RADIUS / GRID), r2 = VIEW_RADIUS * VIEW_RADIUS;
+    const reach = Math.ceil(VIEW_RADIUS / GRID), r2 = VIEW_RADIUS * VIEW_RADIUS;
+    const idle = !published.length, farTick = ++this.ticks % FAR_EVERY === 0 || idle;
     for (const [ws, viewer] of this.sessions) {
       if (viewer.x === null || viewer.id === null) continue;
+      if (farTick) this.sendFar(ws, viewer, published, r2);
       const gx = Math.floor(viewer.x / GRID), gz = Math.floor(viewer.z / GRID);
       const found = [];
       for (let dz = -reach; dz <= reach; dz++) for (let dx = -reach; dx <= reach; dx++) {
@@ -253,6 +270,29 @@ export class SeaCell extends DurableObject {
       viewer.seen = seen;
       this.send(ws, buffer);
     }
+    // Nobody published here any more: the empty snapshots above cleared every view, so sleep.
+    if (idle) this.stopTick();
+  }
+
+  // Boats past the view radius, as distant lanterns: [u8 3][u16 n] + n × [u32 id][f32 x][f32 z], 1 Hz.
+  sendFar(ws, viewer, published, r2) {
+    const far = [];
+    for (const p of published) {
+      if (p.id === viewer.id) continue;
+      const d = (p.x - viewer.x) ** 2 + (p.z - viewer.z) ** 2;
+      if (d > r2) far.push({ p, d });
+    }
+    if (!far.length && !viewer.farCount) return;
+    if (far.length > MAX_FAR) { far.sort((a, b) => a.d - b.d); far.length = MAX_FAR; }
+    viewer.farCount = far.length;
+    const buffer = new ArrayBuffer(3 + far.length * 12), view = new DataView(buffer);
+    view.setUint8(0, 3); view.setUint16(1, far.length, true);
+    far.forEach(({ p }, i) => {
+      view.setUint32(3 + i * 12, p.id, true);
+      view.setFloat32(7 + i * 12, p.x, true);
+      view.setFloat32(11 + i * 12, p.z, true);
+    });
+    this.send(ws, buffer);
   }
 
   send(ws, data) {

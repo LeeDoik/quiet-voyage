@@ -1,16 +1,18 @@
 // Client for the sea server (server/src/worker.js). It speaks the same room shape the Genex SDK
 // gives src/social.js — id, players, me.set, on, leave — so the game code does not care which
 // one carries it. The world is split into 2 km cells: the boat publishes into the cell under it
-// and watches neighbouring cells it is close to, so a border never hides a nearby boat.
+// and watches neighbouring cells within the view radius, so a border never hides a nearby boat.
+// Watched cells only need a rough position (to pick whom to show us), so they hear it at 2 Hz.
 //
 // Networking is real time by nature: performance.now() is read here, but only while online,
 // never by the deterministic simulation.
 
 const CELL = 2000, CELL_LIMIT = 16, CHANNELS = 64;
-const OPEN_REACH = 450, CLOSE_REACH = 600;
-const SEND_INTERVAL = 1000 / 15;
+const OPEN_REACH = 850, CLOSE_REACH = 1000;      // ≥ the server's 800 m view radius
+const SEND_INTERVAL = 1000 / 15, WATCH_INTERVAL = 500;
 const DELAY_MS = 150;
-const EXPIRE_MS = 2000;
+const EXTRAPOLATE_MS = 400;                       // a late snapshot: keep gliding this long, then wait
+const EXPIRE_MS = 2000, FAR_EXPIRE_MS = 3500;
 const BUFFER = 8;
 const FATAL_FAILURES = 10;
 const TAU = Math.PI * 2;
@@ -34,7 +36,8 @@ export function connectSea({ url, id, name, position = null }) {
   const sockets = new Map();
   const remote = new Map();
   const bottles = new Map();   // cell key → that cell's bottle list
-  let channel = 1, me = null, quietText = 'null', lastSend = -Infinity;
+  const far = new Map();       // id → {x, z, seenAt}: boats past the view radius, drawn as distant lanterns
+  let channel = 1, me = null, quietText = 'null', lastSend = -Infinity, lastWatchSend = -Infinity;
   let offset = null, closed = false, failures = 0, reconnecting = false, ownKey = null;
   let settle;
   const ready = new Promise((resolve, reject) => { settle = { resolve, reject }; });
@@ -91,6 +94,13 @@ export function connectSea({ url, id, name, position = null }) {
     if (sock.ws !== ws) return;
     sock.ws = null;
     if (closed || sock.dead) return;
+    // 4408: we went silent (a hidden tab stops the game loop) and the server let us go. Stay away
+    // until the game sends a pose again, or we would come back as a frozen boat.
+    if (code === 4408) {
+      sock.idle = true;
+      if (sock.own && settle.done && !reconnecting) { reconnecting = true; emit('reconnecting'); }
+      return;
+    }
     const wasOwn = sock.own;
     if (!sock.welcomed) sock.attempts++;
     if (wasOwn) {
@@ -104,7 +114,7 @@ export function connectSea({ url, id, name, position = null }) {
   }
 
   function receive(sock, data) {
-    if (typeof data !== 'string') return snapshot(data);
+    if (typeof data !== 'string') return data instanceof ArrayBuffer && data.byteLength && new DataView(data).getUint8(0) === 3 ? farList(data) : snapshot(data);
     let msg;
     try { msg = JSON.parse(data); } catch { return; }
     if (msg.t === 'welcome') {
@@ -161,9 +171,24 @@ export function connectSea({ url, id, name, position = null }) {
     }
   }
 
+  function farList(buffer) {
+    const view = new DataView(buffer), count = buffer.byteLength >= 3 ? view.getUint16(1, true) : 0, seenAt = now();
+    if (buffer.byteLength < 3 + count * 12) return;
+    for (let i = 0; i < count; i++) {
+      const o = 3 + i * 12, pid = view.getUint32(o, true);
+      if (pid !== id) far.set(pid, { x: view.getFloat32(o + 4, true), z: view.getFloat32(o + 8, true), seenAt });
+    }
+  }
+
   function poseAt(samples, t) {
     const last = samples[samples.length - 1];
-    if (t >= last.t || samples.length === 1) return last;
+    if (samples.length === 1) return last;
+    // Past the newest sample (a snapshot is late): glide on along the last motion for a moment
+    // instead of freezing and then jumping when it arrives.
+    if (t >= last.t) {
+      const prev = samples[samples.length - 2], span = Math.max(1, last.t - prev.t), k = Math.min(t - last.t, EXTRAPOLATE_MS) / span;
+      return { x: last.x + (last.x - prev.x) * k, z: last.z + (last.z - prev.z) * k, y: last.y, yaw: last.yaw, speed: last.speed };
+    }
     for (let i = samples.length - 1; i > 0; i--) {
       const a = samples[i - 1], b = samples[i];
       if (t >= a.t) {
@@ -183,6 +208,15 @@ export function connectSea({ url, id, name, position = null }) {
       const pose = poseAt(p.samples, renderT), raw = p.samples[p.samples.length - 1];
       const shape = s => ({ x: s.x, y: s.y, z: s.z, q: quatOf(s.yaw), speed: s.speed, quiet: p.quiet });
       out.set(pid, { state: shape(pose), stateRaw: shape(raw), name: p.name });
+    }
+    return out;
+  }
+
+  function farSails() {
+    const out = [], at = now();
+    for (const [pid, f] of far) {
+      if (at - f.seenAt > FAR_EXPIRE_MS) { far.delete(pid); continue; }
+      if (!remote.has(pid)) out.push({ id: pid, x: f.x, z: f.z });
     }
     return out;
   }
@@ -231,6 +265,7 @@ export function connectSea({ url, id, name, position = null }) {
     closed = true;
     for (const sock of [...sockets.values()]) retire(sock);
     remote.clear();
+    far.clear();
   }
 
   const room = {
@@ -241,6 +276,7 @@ export function connectSea({ url, id, name, position = null }) {
         if (closed || !state || !Number.isFinite(state.x) || !Number.isFinite(state.z)) return;
         me = state;
         arrange();
+        for (const sock of sockets.values()) if (sock.idle) { sock.idle = false; dial(sock); }
         const text = JSON.stringify(state.quiet ?? null);
         if (text !== quietText && text.length <= 1024) {
           quietText = text;
@@ -250,8 +286,9 @@ export function connectSea({ url, id, name, position = null }) {
         const t = now();
         if (t - lastSend < SEND_INTERVAL - 2) return;
         lastSend = t;
-        const pose = encodePose();
-        for (const sock of sockets.values()) send(sock, pose);
+        const pose = encodePose(), watch = t - lastWatchSend >= WATCH_INTERVAL;
+        if (watch) lastWatchSend = t;
+        for (const sock of sockets.values()) if (sock.own || watch) send(sock, pose);
       },
     },
     on(event, fn) {
@@ -261,6 +298,8 @@ export function connectSea({ url, id, name, position = null }) {
     },
     leave() { shutdown(); },
     bottles() { return [...bottles.values()].flat(); },
+    /** Boats seen past the view radius (1 Hz, no heading): [{id, x, z}]. */
+    far: farSails,
     /** A preset phrase index, or {text} a sailor wrote (checked on the server; the answer comes as a 'bottle' event). */
     dropBottle(what) { const own = sockets.get(ownKey); if (!own || own.ws?.readyState !== 1) return false; send(own, JSON.stringify(typeof what === 'object' ? { t: 'bottle', text: String(what.text) } : { t: 'bottle', p: what })); return true; },
     serverTime() { return offset === null ? null : (now() + offset) / 1000; },

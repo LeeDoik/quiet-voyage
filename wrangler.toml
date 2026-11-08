@@ -16,3 +16,16 @@ class_name = "SeaCell"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SeaCell"]
+
+# Staging: `npm run deploy:staging` deploys a separate Worker (quiet-voyage-staging) with its own
+# Durable Objects, bottles and secrets, so test boats never share the sea with real players.
+# Bindings are not inherited by environments, so they are declared again here.
+[env.staging]
+
+[[env.staging.durable_objects.bindings]]
+name = "CELL"
+class_name = "SeaCell"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["SeaCell"]
