@@ -570,24 +570,30 @@ export function createMarineLife(scene, { renderer = null, water = null } = {}) 
   // Placements are gathered first, then written with the ones that reach the surface in front: the
   // undersea pass (shadows under the water) draws every animal, the main pass only those in front,
   // since the opaque sea hides the rest. Most animals are under water most of the time.
-  const pending = Object.fromEntries(Object.keys(SPECIES).map(key => [key, []]));
+  // One preallocated record of 11 numbers per instance and species (no garbage on this hot path).
+  const STRIDE = 11, pending = Object.fromEntries(Object.entries(SPECIES).map(([key, s]) => [key, { data: new Float64Array(s.cap * STRIDE), n: 0 }]));
+  const size3 = new THREE.Vector3();
   function place(key, x, y, z, yaw, pitch, roll, phase, amp, k, scale = 1, shown = true) {
     const list = pending[key];
-    if (list.length < SPECIES[key].cap) list.push([x, y, z, yaw, pitch, roll, phase, amp, k, scale, shown]);
+    if (list.n >= SPECIES[key].cap) return;
+    const d = list.data, o = list.n++ * STRIDE;
+    d[o] = x; d[o + 1] = y; d[o + 2] = z; d[o + 3] = yaw; d[o + 4] = pitch; d[o + 5] = roll;
+    d[o + 6] = phase % TAU; d[o + 7] = amp; d[o + 8] = k; d[o + 9] = scale; d[o + 10] = shown ? 1 : 0;   // phase wrapped: the shared clock is ~1e9 s
   }
   function flush() {
-    for (const [key, list] of Object.entries(pending)) {
-      const mesh = meshes[key], swim = mesh.geometry.attributes.aSwim;
+    for (const key in pending) {
+      const list = pending[key], d = list.data, mesh = meshes[key], swim = mesh.geometry.attributes.aSwim;
       let n = 0, shown = 0;
-      for (const front of [true, false]) for (const [x, y, z, yaw, pitch, roll, phase, amp, k, scale, vis] of list) {
-        if (vis !== front) continue;
-        e.set(pitch, yaw, roll); q.setFromEuler(e); p.set(x, y, z);
-        m.compose(p, q, scale === 1 ? one : p.clone().set(scale, scale, scale));
+      for (const front of [1, 0]) for (let i = 0; i < list.n; i++) {
+        const o = i * STRIDE;
+        if (d[o + 10] !== front) continue;
+        e.set(d[o + 4], d[o + 3], d[o + 5]); q.setFromEuler(e); p.set(d[o], d[o + 1], d[o + 2]);
+        m.compose(p, q, d[o + 9] === 1 ? one : size3.setScalar(d[o + 9]));
         mesh.setMatrixAt(n, m);
-        swim.setXYZ(n, phase % TAU, amp, k);   // wrapped: the shared clock is ~1e9 s
+        swim.setXYZ(n, d[o + 6], d[o + 7], d[o + 8]);
         n++; if (front) shown++;
       }
-      mesh.count = n; mesh.userData.shown = shown; list.length = 0;
+      mesh.count = n; mesh.userData.shown = shown; list.n = 0;
     }
   }
 

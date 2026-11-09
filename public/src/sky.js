@@ -109,7 +109,11 @@ export function createSky(scene, { warm, time, sunDir, moonDir }) {
         }
         c=mix(c,mix(vec3(1.,.97,.9),vec3(1.,.48,.2),warm)*1.5,smoothstep(.99962,.99972,toSun)*day);   // the sun's disc
         vec4 cloud=skyClouds(d,base,5,true);
-        gl_FragColor=vec4(mix(c,cloud.rgb,cloud.a),1.);
+        // Linear (as the sea mirrors it, ocean-material.js linearColor), then the renderer's tone
+        // mapping and sRGB output, so the dome, the mirrored sky and the haze on islands agree.
+        gl_FragColor=vec4(pow(mix(c,cloud.rgb,cloud.a),vec3(2.2)),1.);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }`,
   });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(850, 32, 16), material); mesh.userData.tag = 'sky'; scene.add(mesh);

@@ -69,7 +69,6 @@ export function createWorld(scene, renderer = null) {
   // is made of, and steep parts of the grass turn to rock, as on the islands.
   const coveGround=createTerrainMaterial();coveGround.side=THREE.DoubleSide;
   const SHADOWS=quality.shadowMap>0;
-  const smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
   // The islands' own palette (islands.js buildTerrain), so the cove's grass is as green as theirs.
   const PALETTE=[[.42,.58,.32],[.5,.5,.47],[.86,.8,.62],[.6,.58,.47]].map(c=>new THREE.Color().setRGB(...c,THREE.SRGBColorSpace));
   function groundLayers(geometry,layer){
@@ -79,9 +78,9 @@ export function createWorld(scene, renderer = null) {
       if(n.getY(i)<0)n.setXYZ(i,-n.getX(i),-n.getY(i),-n.getZ(i));
       const y=p.getY(i),slope=1-n.getY(i);
       let w;
-      if(layer==='sand'){const wet=smoothstep(.7,.1,y);w=[0,0,1-wet,wet];}
-      else if(layer==='grass'){const r=smoothstep(.32,.62,slope);w=[1-r,r,0,0];}
-      else{const g=smoothstep(.5,.2,slope)*.6;w=[g,1-g,0,0];}
+      if(layer==='sand'){const wet=smooth(.7,.1,y);w=[0,0,1-wet,wet];}
+      else if(layer==='grass'){const r=smooth(.32,.62,slope);w=[1-r,r,0,0];}
+      else{const g=smooth(.5,.2,slope)*.6;w=[g,1-g,0,0];}
       blend.set(w,i*4);
       const shade=.9+.2*Math.sin(p.getX(i)*.13+p.getZ(i)*.07);
       color.set([0,1,2].map(k=>(PALETTE[0].toArray()[k]*w[0]+PALETTE[1].toArray()[k]*w[1]+PALETTE[2].toArray()[k]*w[2]+PALETTE[3].toArray()[k]*w[3])*shade),i*3);

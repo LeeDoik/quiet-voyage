@@ -37,7 +37,9 @@ async function checkDevKey() {
   const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
   if (hex === expected) { dev = true; writeStore('sea.dev', 'on'); }
 }
-void checkDevKey();
+// Settles once the key (if any) has been checked: hashing is asynchronous, so code that runs at load
+// must wait for this rather than read `dev` once.
+const devChecked = checkDevKey().then(() => dev, () => dev);
 
 // A per-browser random source for things outside the simulation (spawn point, boat id/name).
 function entropy() {
@@ -49,6 +51,8 @@ export const platform = {
   kind,
   get web() { return kind === 'web'; },
   get dev() { return dev; },
+  /** Resolves to the final developer flag, after a ?dev=<key> in the address has been checked. */
+  devReady: () => devChecked,
   server: serverUrl(),
   touch: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches,
   persist: kind === 'web',

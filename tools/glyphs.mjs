@@ -8,13 +8,6 @@ import { basename } from 'node:path';
 const SRC = new URL('../public/src/', import.meta.url);
 const CONTRACT = new Set(['studio.js', 'hud.js']); // studio contract files: console messages only
 
-// The strings interface.js draws in the handwriting face: titles, species names, the quotes round
-// a bottle phrase; bottles.js PHRASES and LORE are added below. A new handwritten title goes here.
-const HAND = [
-  '함께 흐르는 바다', '바람이 이끄는 곳으로, 천천히', '항해 노트', '바다 도감  {seen} / {total}', '병에 담을 말 고르기', '“”',
-  '돌고래', '혹등고래', '범고래', '바다거북', '쥐가오리', '날치', '바닷새',
-  '편지 쓰기', '환경설정', '직접 쓰기', 'Write a letter', 'Settings', 'Write your own',
-];
 
 const KEYWORDS = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await']);
 const ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', 0: '\0' };
@@ -96,14 +89,21 @@ const set = (...texts) => [...new Set(texts.join(''))].filter(c => c >= ' ' && c
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'en' }, configurable: true });
 const { t } = await import('../public/src/i18n.js');
 
-/** The characters each face must hold, per language: { ko: { serif, hand }, en: { serif, hand } }. */
+/**
+ * The characters each face must hold, per language: { ko: { serif, hand }, en: { serif, hand } }.
+ * The handwriting face holds every game string too, not a list of handwritten titles: any two-line
+ * notice (an island's concept and its reply, a moment, a bottle) is drawn in handwriting, and a
+ * character missing from the pen face fell back to the serif mid-word. Symbols a pen face lacks
+ * still come from the serif behind it in the font stack (interface.js HAND).
+ */
 export function glyphSets() {
   const all = set(ASCII, ...gameStrings());
-  const bottles = source('bottles.js');
-  const hand = [...HAND, ...['PHRASES', 'LORE'].flatMap(list => literals(bottles.match(new RegExp(`${list} = \\[[^\\]]*\\]`))[0]))];
   const latin = text => [...text].filter(c => !KOREAN.test(c)).join('');
   return {
-    ko: { serif: all, hand: set(ASCII, ...hand) },
-    en: { serif: latin(all), hand: latin(set(ASCII, ...hand.map(s => t(s)))) },
+    ko: { serif: all, hand: all },
+    en: { serif: latin(all), hand: latin(all) },
   };
 }
+
+/** Hangul in a set: what the Korean pen face itself must draw (never borrowed from the serif). */
+export const hangul = text => [...text].filter(c => KOREAN.test(c)).join('');

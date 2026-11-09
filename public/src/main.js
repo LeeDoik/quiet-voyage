@@ -11,7 +11,7 @@ import { createBots } from './bots.js';
 import { createPerformance } from './performance.js';
 import { createGraphics } from './graphics.js';
 import { platform } from './platform.js';
-import { quality } from './quality.js';
+import { quality, adoptRenderer } from './quality.js';
 import { createTouch } from './touch.js';
 import { createFullscreen } from './fullscreen.js';
 import { createSettings } from './settings.js';
@@ -26,7 +26,9 @@ import { lang, t } from './i18n.js';
 document.documentElement.lang=lang; document.title=t('함께 항해');
 
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
-if(quality.shadowMap){renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;}
+adoptRenderer(renderer);   // before the world is built: a software GPU drops to the low tier
+// Shadow maps are drawn once a frame, when renderScene asks (not again by the undersea or mirror passes).
+if(quality.shadowMap){renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;}
 // Filmic tone mapping: bright sun glints roll off instead of clipping, and the sea and sky gain depth.
 // ?tone=none shows the old linear output for comparison.
 if(new URLSearchParams(location.search).get('tone')!=='none'){renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;}
@@ -39,6 +41,7 @@ const graphics=createGraphics(renderer,scene);
 const reflection=createReflection(renderer,scene,camera,world.waterUniforms);
 let benchOptimized=null;
 function renderScene(){
+  renderer.shadowMap.needsUpdate=true;   // once a frame, in the first pass that draws (the mirror's, or the main one)
   const optimized=benchOptimized??performanceTest.optimized();
   const frustum=visibility.prepare(optimized);
   world.prepare(camera,frustum,sailing.state(),optimized);
@@ -82,8 +85,8 @@ function spawn(){
     if(clearance(x,z).distance>45){sailing.setPose(x,z,platform.entropy()*Math.PI*2);return;}
   }
 }
-// Owner-only handle for inspecting the running game from the console.
-if(platform.dev)window.__sea={scene,camera,renderer,sailing,world,social,logbook};
+// Owner-only console handle; waits for a ?dev=<key> to be checked (asynchronous) on the first visit.
+platform.devReady().then(on=>{if(on)window.__sea={scene,camera,renderer,sailing,world,social,logbook};});
 // Layout facts for the HUD: aspect, a text boost for small screens, and `unit` — the fraction of
 // the frame height one design pixel of text occupies (the HUD scales text by the buffer size).
 function view(){const w=innerWidth,h=innerHeight,b=renderer.getDrawingBufferSize(new THREE.Vector2());return {aspect:w/h,portrait:h>w,k:Math.min(1.9,Math.max(1,640/Math.min(w,h))),unit:Math.max(1,Math.min(b.x,b.y)/720)/b.y};}

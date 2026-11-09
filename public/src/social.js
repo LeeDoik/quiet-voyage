@@ -47,10 +47,18 @@ export function createSocial(scene) {
   }
   function releaseWakes(keep){for(const w of wakes)if(w.id!==null&&!keep.has(w.id)){w.id=null;w.wake.clear();w.wake.mesh.visible=false;}}
   // Waves are shared, so a remote hull's heave, pitch and heel are worked out here from its position.
+  // The helm a remote boat holds is not sent; it is read back from how fast it turns (sea.js turns at
+  // rudder × 0.48 rad/s, less when slow). It leans the hull into the turn and swings its rudder and tiller.
   function float(boat,dt,pose,seaTime){
-    const f=boat.userData.float??=createFloat();
-    const {y,pitch,roll}=f.step(dt,pose.x,pose.z,pose.yaw,pose.speed,seaTime);
+    const d=boat.userData,f=d.float??=createFloat();
+    const turn=(((pose.yaw-(d.lastYaw??pose.yaw))%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;d.lastYaw=pose.yaw;
+    // A jump (a late snapshot caught up, a boat picked back up) is not the helm: keep the last guess.
+    const helm=Math.abs(turn)>.15?d.helm??0:Math.max(-1,Math.min(1,turn/Math.max(dt,1e-3)/(.48*Math.max(.25,Math.min(1,pose.speed/2)))));
+    d.helm=(d.helm??0)+(helm-(d.helm??0))*(1-Math.exp(-dt*3));
+    const {y,pitch,roll}=f.step(dt,pose.x,pose.z,pose.yaw,pose.speed,seaTime,d.helm);
     boat.position.set(pose.x,y,pose.z);boat.rotation.set(pitch,pose.yaw,roll,'YXZ');
+    if(d.rudder===undefined)d.rudder=boat.getObjectByName('rudder')??null;
+    if(d.rudder)d.rudder.rotation.y=-.55*d.helm;
   }
   for(const w of wakes)w.wake.mesh.visible=false;
   function makeBoat(tag){const source=scene.children.find(o=>o.userData.tag==='boat');const mesh=source&&createVesselLOD(source,tag);if(mesh)scene.add(mesh);return mesh;}

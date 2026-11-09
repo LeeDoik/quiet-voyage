@@ -232,7 +232,8 @@ export function createOceanMaterial() {
         float masking = nv/(nv*(1.0-k)+k) * nl/(nl*(1.0-k)+k);
         float sunFresnel = .0204+.9796*pow(1.0-vh,5.0);
         float specular = distribution*masking*sunFresnel/(4.0*nv);
-        color += mix(vec3(1.0,.89,.64),vec3(1.0,.48,.21),warm)*specular*.6*(1.0-night)*(1.0-rain*.7)*step(0.0,sunDir.y);
+        // Under rain clouds the sun is hidden: its glints all but go (filmic tone mapping kept a 30% remnant bright).
+        color += mix(vec3(1.0,.89,.64),vec3(1.0,.48,.21),warm)*specular*.6*(1.0-night)*(1.0-rain*.95)*step(0.0,sunDir.y);
         vec3 moonHalf = normalize(viewDir+moonDir);
         float mh = max(0.0,dot(normal,moonHalf));
         float moonA2 = pow(roughness*1.25,4.0), moonD = mh*mh*(moonA2-1.0)+1.0;

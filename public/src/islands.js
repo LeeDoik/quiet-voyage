@@ -20,8 +20,9 @@ const BASE_RINGS = [0, .06, .12, .18, .24, .3, .36, .42, .48, .54, .6, .65, .7, 
 // ring, for smoother slopes and silhouettes. The coastline ring (t = 1) is the same either way, so
 // collisions never change. FINE_NEAR/FINE_FAR: metres from the coast to swap in and back (hysteresis).
 const FINE_RINGS = BASE_RINGS.flatMap((t, i) => i ? [(BASE_RINGS[i - 1] + t) / 2, t] : [t]);
-const FINE = quality.terrainDetail > 1, FINE_NEAR = 450, FINE_FAR = 650;
-const SHADOWS = quality.shadowMap > 0;
+const FINE_NEAR = 450, FINE_FAR = 650;
+const FINE = () => quality.terrainDetail > 1;   // read when used: the tier settles once the renderer exists
+const SHADOWS = () => quality.shadowMap > 0;
 
 function hash(x, z, seed) {
   const s = Math.sin(x * 127.1 + z * 311.7 + seed * 74.7) * 43758.5453;
@@ -166,7 +167,7 @@ function buildTerrain(s) {
   const mesh = new THREE.Mesh(terrainGeometry(s, false), terrainMaterial);
   mesh.userData.tag = 'island-terrain';
   mesh.userData.coarse = mesh.geometry; mesh.userData.fine = null;
-  mesh.castShadow = mesh.receiveShadow = SHADOWS;
+  mesh.castShadow = mesh.receiveShadow = SHADOWS();
   return mesh;
 }
 
@@ -211,7 +212,7 @@ function buildTrees(s) {
   for (const [material, list] of byMaterial) {
     const mesh = new THREE.Mesh(mergeGeometries(list, false), material);
     mesh.userData.tag = material.userData.foliage ? 'foliage' : 'trunk';
-    mesh.castShadow = mesh.receiveShadow = SHADOWS;
+    mesh.castShadow = mesh.receiveShadow = SHADOWS();
     group.add(mesh); list.forEach(g => g.dispose());
   }
   return group;
@@ -313,7 +314,7 @@ export function createIslands(scene) {
       for (const { spec, group } of live.values()) {
         const coast = Math.hypot(camera.position.x - spec.x, camera.position.z - spec.z) - Math.max(spec.rx, spec.rz);
         const near = coast < TREE_RANGE, terrain = group.userData.terrain;
-        if (FINE && terrain) {
+        if (FINE() && terrain) {
           const fine = terrain.geometry === terrain.userData.fine;
           // At most one fine mesh is built a frame, so sailing up to a cluster never stalls.
           if (!fine && coast < FINE_NEAR && (terrain.userData.fine || !built)) {

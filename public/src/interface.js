@@ -173,7 +173,7 @@ export function createInterface() {
         const keys = [t('E  빛물결'), t('T  자동 항해'), ...(social.canPractice ? [`H  ${t(social.practice ? '동행 연습 마치기' : '동행 연습')}`] : [])];
         keyTags(p, 'quiet-key', keys, .87, seen);
         keyTags(p, 'journal-key', `${t('J 노트   K 도감   B 편지   C 사진')}${platform.dev ? t('   P 성능   G 그래픽') : ''}`.trim().split(/\s{3,}/), .925, seen);
-      } else if (social?.connected) {
+      } else if (social?.connected && social.peers > 0) {   // on a small screen, only when there is company
         const peers = t('근처 배 {n}척', { n: social.peers });
         tag(p, 'quiet-mode', peers, .5 - p.widthOf(peers, 11) / 2 - 8 * px / A, below + 4 * px, 11);
         below += em(11) + 14 * px;
@@ -232,7 +232,7 @@ const rgba = (c, a = 1) => `rgba(${c.map(Math.round).join(',')},${a})`;
 const mix = (a, b, f) => a.map((v, i) => v + (b[i] - v) * f);
 const SERIF = lang === 'ko' ? '"QV Serif KO", AppleMyungjo, Batang, "Noto Serif KR", serif' : '"QV Serif", "QV Symbols", Georgia, "Times New Roman", serif';
 const HAND = `${lang === 'ko' ? '"QV Hand KO"' : '"QV Hand"'}, ${SERIF}`;
-// The pen faces draw small beside the serif. They hold only the text in tools/glyphs.mjs HAND.
+// The pen faces draw small beside the serif. They hold every game string (tools/glyphs.mjs).
 const HAND_SIZE = lang === 'ko' ? 1.32 : 1.2;
 // Letters sailors write can hold any character, past what the cut faces carry: a full system face.
 const LETTER = '"Nanum Myeongjo", AppleMyungjo, "Apple SD Gothic Neo", Batang, "Noto Serif KR", serif';
@@ -447,7 +447,13 @@ function drawCompass(p, boat, top, w, sky) {
   if (wind !== null) p.icon('compass-wind', 'M50 4 L92 50 L50 96 L8 50 Z', .5 + wind * w, top, 9 * px, { fill: p.teal });
   p.icon('compass-mark', 'M10 8 H90 L50 92 Z', .5, top - 1 * px, 9 * px, { fill: p.stamp });
   p.box('compass-lubber', .5 - .6 * px / A, top + height * .62, 1.2 * px / A, height * .34, p.stamp);
-  const readout = `${String(Math.round(heading) % 360).padStart(3, '0')}°  ·  ${t('{v}노트', { v: knots(boat.speed) })}${wind === null ? `  ·  ${t('바람 {dir}에서', { dir: CARDINAL[Math.round(from / 45) * 45 % 360] })}` : ''}${sky ? `  ·  ${sky}` : ''}`;
+  // Heading and speed always; the wind's side and the weather while they fit (a phone held upright
+  // is too narrow for all four: the least needed goes first).
+  const parts = [`${String(Math.round(heading) % 360).padStart(3, '0')}°`, t('{v}노트', { v: knots(boat.speed) })];
+  if (wind === null) parts.push(t('바람 {dir}에서', { dir: CARDINAL[Math.round(from / 45) * 45 % 360] }));
+  if (sky) parts.push(sky);
+  let readout = parts.join('  ·  ');
+  while (parts.length > 2 && p.widthOf(readout, 12) + 20 * px / A > .94) { parts.pop(); readout = parts.join('  ·  '); }
   const tw = p.widthOf(readout, 12) + 20 * px / A, ty = top + height + 5 * px;
   p.sheet('compass-tag', .5 - tw / 2, ty, tw, lh(12) + 4 * px, { radius: 2 * px });
   p.write('compass-heading', readout, .5, ty + 2 * px + (lh(12) - em(12)) / 2, 12, INK, 'center');

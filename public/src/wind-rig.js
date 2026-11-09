@@ -23,10 +23,12 @@ function hinge(mesh){
   // Rest shape: kept on the geometry, so a clone (a remote boat) bends from the same flat sheet.
   if(!geometry.userData.rest)geometry.userData.rest=geometry.attributes.position.array.slice();
   const rest=geometry.userData.rest,count=rest.length/3;
-  // The luff's two ends (u = 0), lowest to highest: the hinge axis points up the luff.
+  // The luff's two ends (the smallest u, normally 0), lowest to highest: the hinge points up the luff.
+  let luffU=Infinity;
+  for(let i=0;i<count;i++)luffU=Math.min(luffU,uv.getX(i));
   let lo=null,hi=null;
   for(let i=0;i<count;i++){
-    if(uv.getX(i)>.001)continue;
+    if(uv.getX(i)>luffU+.001)continue;
     const y=rest[i*3+1];
     if(!lo||y<lo.y)lo={y,i};
     if(!hi||y>hi.y)hi={y,i};

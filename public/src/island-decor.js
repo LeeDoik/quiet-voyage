@@ -100,7 +100,7 @@ const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const cyl = (r0, r1, h, n = 10) => new THREE.CylinderGeometry(r1, r0, h, n);
 /** A rough rock: a lumpy, faceted icosahedron. */
 function rockGeometry(rng, sx, sy, sz) {
-  const g = new THREE.IcosahedronGeometry(1, 1).toNonIndexed(), p = g.attributes.position, seen = new Map();
+  const g = new THREE.IcosahedronGeometry(1, 1), p = g.attributes.position, seen = new Map();   // already non-indexed
   for (let i = 0; i < p.count; i++) {
     const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
     const k = seen.get(key) ?? seen.set(key, .78 + rng() * .4).get(key);   // shared corners move together

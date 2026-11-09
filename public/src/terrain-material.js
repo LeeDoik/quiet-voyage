@@ -17,13 +17,6 @@ const MEANS = { grass: [61, 52, 18], rock: [120, 96, 73], sand: [122, 108, 86], 
 // Metres per texture repeat and normal strength.
 const SCALE = { grass: 7, rock: 13, sand: 4.5, shore: 5 };
 
-/** The colour that leaves a blend of the photo layers untinted (grass, rock, sand, shore weights), linear. */
-export function neutralTint([g, r, s, w]) {
-  const c = new THREE.Color(), mean = (k, i) => new THREE.Color().setRGB(...MEANS[k].map(v => v / 255), THREE.SRGBColorSpace).toArray()[i];
-  const total = Math.max(1e-4, g + r + s + w);
-  return [0, 1, 2].map(i => (mean('grass', i) * g + mean('rock', i) * r + mean('sand', i) * s + mean('shore', i) * w) / total);
-}
-
 let shared = null;
 function textures() {
   if (shared) return shared;
