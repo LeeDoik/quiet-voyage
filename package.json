@@ -8,8 +8,9 @@
     "deploy:staging": "wrangler deploy --env staging",
     "bots": "node tools/sea-bots.mjs",
     "models": "blender -b -P tools/blender/marine_life.py -- --render",
-    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs && node tests/dolphin-ride.mjs && node tests/boat-float.mjs && node tests/fonts.mjs && node tests/touch-layout.mjs && node tests/moderate.mjs",
-    "boat": "blender -b -P tools/blender/boat.py -- --render"
+    "test": "node tests/sea-voyage.mjs && node tests/wind-helm.mjs && node tests/quiet-sea.mjs && node tests/dolphin-ride.mjs && node tests/boat-float.mjs && node tests/fonts.mjs && node tests/touch-layout.mjs && node tests/moderate.mjs && node tests/resolution.mjs",
+    "boat": "blender -b -P tools/blender/boat.py -- --render",
+    "guide": "blender -b -P tools/blender/guide_art.py"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

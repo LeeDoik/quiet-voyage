@@ -26,6 +26,7 @@ import { lang, t } from './i18n.js';
 document.documentElement.lang=lang; document.title=t('함께 항해');
 
 const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,platform.touch?1.5:2)); renderer.outputColorSpace=THREE.SRGBColorSpace; document.body.appendChild(renderer.domElement);
+// Phones start at a pixel ratio of 1.5; graphics.js (resolution.js) may sharpen to 2 or ease toward 1.
 adoptRenderer(renderer);   // before the world is built: a software GPU drops to the low tier
 // Shadow maps are drawn once a frame, when renderScene asks (not again by the undersea or mirror passes).
 if(quality.shadowMap){renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;renderer.shadowMap.autoUpdate=false;}

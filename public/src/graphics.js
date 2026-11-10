@@ -1,10 +1,11 @@
 import { platform } from './platform.js';
+import { createResolution, resolutionStep } from './resolution.js';
 
 export function createGraphics(renderer,scene){
   let shown=false,held=false,frames=0,suspended=false;
-  // Web build: hold the frame rate by trading resolution, within the device's sharpness.
-  const maxRatio=Math.min(globalThis.devicePixelRatio||1,platform.touch?1.5:2),minRatio=.6;
-  let ratio=renderer.getPixelRatio(),adaptClock=0,raiseAfter=0;
+  // Web build: hold the frame rate by trading resolution, within the device's sharpness (resolution.js).
+  const res=createResolution(Math.min(globalThis.devicePixelRatio||1,2),renderer.getPixelRatio());
+  let ratio=renderer.getPixelRatio();
   let timing={fps:null,meanMs:null,p95Ms:null,samples:0};
   let resources={meshes:0,materials:0,bufferMiB:0};
   let draw={calls:0,triangles:0,lines:0,points:0};
@@ -31,16 +32,14 @@ export function createGraphics(renderer,scene){
     worker.onerror=()=>{status='unavailable';worker.terminate();worker=null;};
   }catch{status='unavailable';}
   inventory();
-  document.addEventListener('visibilitychange',()=>worker?.postMessage('reset'));
+  // Back from a hidden tab (or a benchmark) the first seconds are not a fair measure.
+  document.addEventListener('visibilitychange',()=>{worker?.postMessage('reset');res.warm=3;});
   return {
-    suspend(value){suspended=value;worker?.postMessage('reset');timing={fps:null,meanMs:null,p95Ms:null,samples:0};status=value?'benchmark':'sampling';},
+    suspend(value){suspended=value;res.warm=3;worker?.postMessage('reset');timing={fps:null,meanMs:null,p95Ms:null,samples:0};status=value?'benchmark':'sampling';},
     input(input){const down=platform.dev&&input.keys.has('KeyG');if(down&&!held)shown=!shown;held=down;},
     adapt(dt){
-      if(!platform.web||suspended||status!=='live'||!timing.fps)return;
-      adaptClock+=dt;raiseAfter-=dt;if(adaptClock<2)return;adaptClock=0;
-      let next=ratio;
-      if(timing.fps<46&&ratio>minRatio){next=Math.max(minRatio,ratio*.85);raiseAfter=8;}
-      else if(timing.fps>57&&ratio<maxRatio&&raiseAfter<=0)next=Math.min(maxRatio,ratio*1.1);
+      if(!platform.web||suspended||status!=='live')return;
+      const next=resolutionStep(res,timing.fps,dt);
       if(Math.abs(next-ratio)<.01)return;
       ratio=next;renderer.setPixelRatio(ratio);renderer.setSize(innerWidth,innerHeight,false);
     },

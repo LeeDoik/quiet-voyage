@@ -5,3 +5,4 @@ node_modules/
 .dev.vars
 tools/blender/renders/
 tools/blender/.boat-textures/
+tools/blender/.guide-passes/

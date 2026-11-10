@@ -715,10 +715,12 @@ function drawGuide(p, guide, area, touch) {
     p.h.panel(`${id}-line`, { x: c.x, y: c.y, w: c.w * A, h: c.h, radius: 2 * px, fill: null, stroke: rgba(INK, .22), width: .8 * px });
     if (two) p.h.path(`${id}-tape`, `M0 ${2 + jag(i) * 4} L100 0 L100 ${16 - jag(i) * 4} L0 18 Z`, { x: c.x + c.w / 2 - 14 * px / A, y: c.y - 5 * px, w: 28 * px, h: 9 * px, viewBox: '0 0 100 18', fill: rgba(mix([250, 244, 226], LAMP, p.lamp), .7) });
     const inner = 8 * px / A, d = SPECIES[g.key];
-    // The sketch: on top in a grid card, to the left in a row card.
-    const sh = two ? Math.min(c.h * .38, (c.w - 2 * inner) * A / 2) : Math.min(c.h - 12 * px, (c.w * .28) * A / 2);
-    const sx = two ? c.x + c.w / 2 - sh / A : c.x + inner, sy = two ? c.y + 10 * px : c.y + (c.h - sh) / 2;
-    if (d) p.h.path(`${id}-sketch`, d, { x: sx, y: sy, w: sh * 2, h: sh, viewBox: '0 0 200 100', ...(g.seen ? { fill: rgba(mix(TEAL, INK, .35), .92) } : { fill: null, stroke: 'rgba(90,76,60,.4)', width: .9 * px }) });
+    // The plate: on top in a grid card, to the left in a row card. A creature met is painted in ink
+    // and watercolour (assets/guide, from tools/blender/guide_art.py); one not yet met is a pencil outline.
+    const sh = two ? Math.min(c.h * .44, (c.w - 2 * inner) * A / 2) : Math.min(c.h - 12 * px, (c.w * .3) * A / 2);
+    const sx = two ? c.x + c.w / 2 - sh / A : c.x + inner, sy = two ? c.y + 8 * px : c.y + (c.h - sh) / 2;
+    if (g.seen) p.h.image(`${id}-sketch`, `assets/guide/${g.key}.webp`, { x: sx, y: sy, w: sh * 2, h: sh });
+    else if (d) p.h.path(`${id}-sketch`, d, { x: sx, y: sy, w: sh * 2, h: sh, viewBox: '0 0 200 100', fill: null, stroke: 'rgba(90,76,60,.4)', width: .9 * px });
     const tx = two ? c.x + inner : sx + sh * 2 / A + inner, tw = c.x + c.w - inner - tx;
     let ty = two ? sy + sh + 6 * px : c.y + 5 * px;
     if (g.seen) {
