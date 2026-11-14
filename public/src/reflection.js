@@ -22,7 +22,7 @@ const bias = new THREE.Matrix4().set(.5, 0, 0, .5, 0, .5, 0, .5, 0, 0, .5, .5, 0
 
 export function createReflection(renderer, scene, camera, uniforms) {
   uniforms.reflectionOn.value = 0;
-  if (!quality.reflection) return { render() {}, state: () => ({ on: false }) };
+  if (!quality.reflection) return { render: () => false, off() {}, state: () => ({ on: false }) };
   const target = new THREE.WebGLRenderTarget(2, 2, { depthBuffer: true });
   target.texture.name = 'Water reflection';
   uniforms.reflectionMap.value = target.texture;
@@ -30,7 +30,7 @@ export function createReflection(renderer, scene, camera, uniforms) {
   const plane = new THREE.Plane(), keep = new THREE.Vector3(0, 1, 0), surface = new THREE.Vector3(0, -.15, 0);   // keep y > -0.15
   const clip = new THREE.Vector4(), q = new THREE.Vector4();
   const clear = new THREE.Color(), hidden = [];
-  let last = 0;
+  let last = 0, disabled = false;
   // Replace the projection's near plane with the water plane (Lengyel's oblique near-plane clipping).
   function obliqueNear(camera) {
     plane.setFromNormalAndCoplanarPoint(keep, surface).applyMatrix4(camera.matrixWorldInverse);
@@ -42,14 +42,16 @@ export function createReflection(renderer, scene, camera, uniforms) {
   }
 
   return {
+    /** Draw the mirror for this frame. True when it drew, and so brought every world matrix up to date. */
     render() {
+      if (disabled) return false;
       renderer.getDrawingBufferSize(size);
       const w = Math.max(2, Math.round(size.x * quality.reflection)), h = Math.max(2, Math.round(size.y * quality.reflection));
       if (target.width !== w || target.height !== h) target.setSize(w, h);
       // The camera mirrored in the plane y = 0, looking at the mirrored point it looks at.
       camera.updateMatrixWorld();
       // A camera at or below the cut (a photo from the waterline) has nothing to mirror.
-      if (camera.position.y < .3) { uniforms.reflectionOn.value = 0; return; }
+      if (camera.position.y < .3) { uniforms.reflectionOn.value = 0; return false; }
       mirror.fov = camera.fov; mirror.aspect = camera.aspect; mirror.near = camera.near; mirror.far = camera.far * 3;
       mirror.updateProjectionMatrix();
       mirror.position.set(camera.position.x, -camera.position.y, camera.position.z);
@@ -77,7 +79,10 @@ export function createReflection(renderer, scene, camera, uniforms) {
       for (const o of hidden) o.visible = true;
       uniforms.reflectionOn.value = 1;
       last = renderer.info.render.calls;
+      return true;
     },
-    state: () => ({ on: true, width: target.width, height: target.height, calls: last }),
+    /** Stop mirroring (a slow device, main.js): the water shows the analytic sky alone. */
+    off() { disabled = true; uniforms.reflectionOn.value = 0; target.setSize(2, 2); },
+    state: () => ({ on: !disabled, width: target.width, height: target.height, calls: last }),
   };
 }

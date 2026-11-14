@@ -7,6 +7,41 @@ export const SHORE_SLOTS = 6;
 export const VESSEL_SLOTS = 4;
 import { waveGLSL } from './wave-field.js';
 import { skyGLSL, skyShared } from './sky.js';
+import { quality } from './quality.js';
+
+// Ripple octaves on the water. Their spacing, speed and strength are fixed, so they are baked into
+// the shader unrolled; only their directions follow the wind (rippleDirections, set by setOceanWind).
+// Each octave rides at the golden angle from the last around the wind, so no two line up into stripes.
+const RIPPLES = Array.from({ length: 6 }, (_, i) => {
+  const frequency = 1.7 * 1.75 ** i;
+  return { frequency, spin: i * 2.39996 + .4 * Math.sin(i * 1.7), speed: Math.sqrt(9.8 * frequency) * .55, amplitude: .06 * .74 ** i, warp: 1 - i * .12, phase: i * 1.9, offset: i * 7.7, mix: (i * .618) % 1 };
+});
+const f = n => n.toFixed(6);
+/** Unrolled octaves, each nested in the last: once an octave is finer than a pixel, so are the rest. */
+function rippleGLSL(count) {
+  let open = '', close = '';
+  RIPPLES.slice(0, count).forEach((r, i) => {
+    open += `
+        if (rippleCount > ${i}) { float filtered${i} = 1.0-smoothstep(.35,2.2,footprint*${f(r.frequency)});
+        if (filtered${i} > 0.0) {
+          vec2 direction = rippleDirections[${i}];
+          float bend = noise(p*${f(r.frequency * .32)}+${f(r.offset)}+direction*time*.15)*4.2;   // crests bend at their own wavelength
+          float phase = dot(p,direction)*${f(r.frequency)} - time*${f(r.speed)} + warp*${f(r.warp)} + bend + ${f(r.phase)};
+          ripple += ${f(r.amplitude)}*filtered${i}*gust*(.35+1.3*mix(patchA,patchB,${f(r.mix)}))*(1.0+rain*.4)*cos(phase)*direction;`;
+    close += '\n        }}';
+  });
+  return open + close;
+}
+
+/** The wind the water's ripples run with: direction (radians) and strength, as world.js has them. */
+export function setOceanWind(uniforms, direction, strength) {
+  uniforms.wind.value.set(direction, strength);
+  const ax = -Math.sin(direction), az = -Math.cos(direction), cx = -az, cz = ax;   // along, and across (shader: vec2(-along.y, along.x))
+  RIPPLES.forEach((r, i) => {
+    const x = ax * Math.cos(r.spin) * 1.25 + cx * Math.sin(r.spin), z = az * Math.cos(r.spin) * 1.25 + cz * Math.sin(r.spin), l = Math.hypot(x, z);
+    uniforms.rippleDirections.value[i].set(x / l, z / l);
+  });
+}
 
 export function createOceanMaterial() {
   return new THREE.ShaderMaterial({
@@ -15,6 +50,9 @@ export function createOceanMaterial() {
       time: {value: 0}, warm: {value: 0}, cover: skyShared.cover, skyLattice: skyShared.skyLattice,
       wind: {value: new THREE.Vector2(.65, 1)},
       vessels: {value: Array.from({length: VESSEL_SLOTS}, () => new THREE.Vector4(0, 0, 0, -1))},
+      vesselCount: {value: 1},                         // slots in use, the player's first: the rest are skipped
+      rippleDirections: {value: RIPPLES.map(() => new THREE.Vector2(1, 0))},
+      rippleCount: {value: quality.ripples},           // fewer under strain (main.js), never more than baked in
       mist: {value: .00115},
       night: env.night, rain: env.rain,
       sunDir: {value: new THREE.Vector3(-210, 95, -650).normalize()},
@@ -43,6 +81,8 @@ export function createOceanMaterial() {
       uniform vec2 wind;
       uniform vec3 sunDir, moonDir;
       uniform vec4 vessels[4], shores[6], shoreShape[6];
+      uniform int vesselCount, rippleCount;
+      uniform vec2 rippleDirections[6];
       uniform vec3 cove;
       uniform sampler2D lifeMap;
       uniform vec4 lifeFrame;
@@ -55,10 +95,9 @@ export function createOceanMaterial() {
       ${skyGLSL}
 
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
-        return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+1.0), f.x), f.y);
-      }
+      // Value noise from the sky's lattice texture (sky.js): one fetch instead of four sine hashes,
+      // which the water needs a dozen times a pixel.
+      float noise(vec2 p) { return skyNoise(p); }
       vec3 linearColor(vec3 color) { return pow(color, vec3(2.2)); }
       // The sky the water mirrors (sky.js). Ripples blur the clouds, so two octaves do; and where the
       // water mirrors little (looking down, close by) the clouds are skipped.
@@ -100,6 +139,7 @@ export function createOceanMaterial() {
       vec3 hullWater(vec2 p) {
         vec3 acc = vec3(1.0, 0.0, 0.0);
         for (int i=0; i<4; i++) {
+          if (i >= vesselCount) break;
           vec4 v = vessels[i];
           vec2 d = p-v.xy;
           if (v.w < 0.0 || dot(d,d) > 196.0) continue;
@@ -131,6 +171,7 @@ export function createOceanMaterial() {
         }
         vec2 q = (p-cove.xy)/cove.z;
         q.y /= 1.15;
+        if (dot(q,q) > 19600.0) return max(0.0, min(d, (length(q)-118.0)*cove.z));   // far from the cove: no trig
         float angle = atan(-q.y,q.x);
         if (angle < -.85) angle += 2.0*PI;
         float radius = length(q)/(1.0+.025*sin(angle*5.0)+.018*sin(angle*11.0));
@@ -156,24 +197,9 @@ export function createOceanMaterial() {
         float gust = .65+.7*noise(p*.085+along*time*.14);
         float patchA = noise(p*.031-along*time*.03), patchB = noise(p*.067+across*time*.04+5.3);
         vec2 ripple = vec2(0.0);
-        // Ripple octaves fan out by the golden angle around the wind so no two line up into
-        // stripes; once an octave is finer than a pixel the rest are skipped.
-        for (int i=0; i<6; i++) {
-          float octave = float(i);
-          float frequency = 1.7*pow(1.75,octave);
-          float filtered = 1.0-smoothstep(.35,2.2,footprint*frequency);
-          if (filtered <= 0.0) break;
-          float spin = octave*2.39996+.4*sin(octave*1.7);
-          vec2 direction = normalize(along*cos(spin)*1.25+across*sin(spin));
-          // Bend each crest with noise at its own wavelength so it never runs straight for long.
-          float bend = noise(p*frequency*.32+octave*7.7+direction*time*.15)*4.2;
-          float phase = dot(p,direction)*frequency - time*sqrt(9.8*frequency)*.55 + warp*(1.0-octave*.12) + bend + octave*1.9;
-          float patchiness = .35+1.3*mix(patchA,patchB,fract(octave*.618));
-          float amplitude = .06*pow(.74,octave)*filtered*gust*patchiness*(1.0+rain*.4);
-          ripple += amplitude*cos(phase)*direction;
-        }
+        ${rippleGLSL(quality.ripples)}
         // Ring crests are ~18 cm apart: drawn only where a pixel is finer than that.
-        if (rain > .01 && footprint < .06) ripple += rainRipple(p,time)*.4*rain*(1.0-smoothstep(.02,.06,footprint));
+        ${quality.ripples > 4 ? 'if (rain > .01 && footprint < .06) ripple += rainRipple(p,time)*.4*rain*(1.0-smoothstep(.02,.06,footprint));' : ''}
         vec3 hull = hullWater(p);
         vec3 normal = normalize(vec3(-field.y-hull.y-ripple.x*wind.y,1.0,-field.z-hull.z-ripple.y*wind.y));
         vec3 halfDir = normalize(viewDir+sunDir);
@@ -244,6 +270,7 @@ export function createOceanMaterial() {
         float lamp = smoothstep(0.0,.35,night)*(1.0-.3*rain);
         if (lamp > 0.0) {
           for (int i=0; i<4; i++) {
+            if (i >= vesselCount) break;
             vec4 v = vessels[i];
             if (v.w < 0.0 || dot(p-v.xy,p-v.xy) > 3600.0) continue;
             float c = cos(v.z), s = sin(v.z);
@@ -266,8 +293,8 @@ export function createOceanMaterial() {
         // on the water (drifting with the streaks) and fades over about two seconds.
         float crestFoam = 0.0;
         if (windy > .01) {
-          for (int k=0; k<4; k++) {
-            float age = float(k)*.5;
+          for (int k=0; k<${quality.crests}; k++) {
+            float age = float(k)*${f(2 / quality.crests)};
             float crest = smoothstep(.62-.25*windy,.95,waveField(p,time-age).x+(streak-.5)*.35);
             crestFoam = max(crestFoam, crest*(1.0-age/2.0));
           }
@@ -279,7 +306,7 @@ export function createOceanMaterial() {
         color = mix(color,foamLight,foam);
         color += linearColor(vec3(.3,.8,1.))*beachFoam*night*(1.0-rain*.5)*.9;   // at night the breakers glow blue (bioluminescence)
         float haze = 1.0-exp(-pow(distanceToEye*mist*.85,2.0));
-        color = mix(color,linearColor(skyBase(normalize(vec3(-viewDir.x,.02,-viewDir.z)))),haze);   // the horizon behind
+        if (haze > .002) color = mix(color,linearColor(skyBase(normalize(vec3(-viewDir.x,.02,-viewDir.z)))),haze);   // the horizon behind
         gl_FragColor = vec4(color,1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

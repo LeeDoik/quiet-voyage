@@ -38,7 +38,15 @@ function resize(){renderer.setSize(innerWidth,innerHeight,false);camera.aspect=i
 const world=createWorld(scene,renderer), sailing=createSailing(scene,camera), ui=createInterface(), social=createSocial(scene), farSails=createFarSails(scene);
 let phase='menu', demoMode=false;
 const bots=createBots(scene),visibility=createVisibility(scene,camera);
-const graphics=createGraphics(renderer,scene);
+// When even the lowest resolution cannot hold the frame rate (graphics.js), effects go one at a time:
+// the water's mirror of islands and boats, then the finest ripples, then the sun's shadows.
+function relieve(){
+  const u=world.waterUniforms;
+  if(reflection.state().on)reflection.off();
+  else if(u.rippleCount.value>3)u.rippleCount.value--;
+  else if(renderer.shadowMap.enabled){world.shadows(false);renderer.shadowMap.enabled=false;}
+}
+const graphics=createGraphics(renderer,scene,{relieve});
 const reflection=createReflection(renderer,scene,camera,world.waterUniforms);
 let benchOptimized=null;
 function renderScene(){
@@ -47,8 +55,9 @@ function renderScene(){
   const frustum=visibility.prepare(optimized);
   world.prepare(camera,frustum,sailing.state(),optimized);
   social.prepare(camera,frustum,optimized);bots.prepare(camera,frustum,optimized);
-  reflection.render();
-  renderer.render(scene,camera);performanceTest.draw();
+  // The mirror pass, when it draws, has just updated every world matrix: the main pass skips that walk.
+  if(reflection.render())scene.matrixWorldAutoUpdate=false;
+  renderer.render(scene,camera);scene.matrixWorldAutoUpdate=true;performanceTest.draw();
   if(benchOptimized===null)graphics.frame();
 }
 const performanceTest=createPerformance({renderer,
@@ -195,3 +204,6 @@ installStudio({canvas:renderer.domElement,scene,renderer,camera,eyeUsesRenderCam
   if(!demoMode){ui.update(dt,input,snapshot());ui.hud(snapshot());}
 },render(){if(!performanceTest.active()){renderScene();if(photo.shot){photo.shot=false;savePhoto();}}},probes:snapshot});
 reset();
+// Build every shader in the scene while the title screen is up (in parallel where the browser can),
+// so the first minutes at sea do not stall on shader compiles, which are slow on Windows (Direct3D).
+setTimeout(()=>{renderer.compileAsync?.(scene,camera)?.catch(()=>{});},1500);

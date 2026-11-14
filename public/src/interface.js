@@ -239,6 +239,11 @@ const LETTER = '"Nanum Myeongjo", AppleMyungjo, "Apple SD Gothic Neo", Batang, "
 const WRITTEN = '\u2063';   // bottles.js: marks a sailor's own words
 const FONTS = lang === 'ko' ? { 'QV Serif KO': 'qv-serif-ko', 'QV Hand KO': 'qv-hand-ko' } : { 'QV Serif': 'qv-serif', 'QV Symbols': 'qv-symbols', 'QV Hand': 'qv-hand' };
 let paper = null, paperScale = 0, meter = null;
+// The HUD is laid out again every frame, mostly with the same lines: their widths (at 100 px) and the
+// torn edges' outlines are kept. Widths are forgotten whenever a font arrives, since they change then.
+const widths = new Map(), edges = new Map();
+let fontsSeen = -1;
+const remember = (map, key, value) => { if (map.size > 3000) map.clear(); map.set(key, value); return value; };
 
 /** Cream paper, made once from a seeded generator: mottling, grain and fibres on a seamless tile. */
 function makePaper() {
@@ -283,6 +288,8 @@ function pen(h, view, night) {
     meter = document.createElement('canvas').getContext('2d');
     for (const [family, file] of Object.entries(FONTS)) h.font(family, new URL(`../assets/fonts/${file}.woff2`, import.meta.url).href);
   }
+  const fonts = document.fonts?.size ?? 0;
+  if (fonts !== fontsSeen) { fontsSeen = fonts; widths.clear(); }
   // One texel per design pixel at any pixel ratio: the HUD paints at the drawing buffer's size.
   const scale = U * (document.querySelector('canvas')?.height || 720);
   if (scale !== paperScale) { paperScale = scale; paper.setTransform?.(new DOMMatrix([scale, 0, 0, scale, 0, 0])); }
@@ -304,8 +311,14 @@ function pen(h, view, night) {
   const hand = (id, value, x, y, size, color = INK, align = 'left') => write(id, value, x, y, size * HAND_SIZE, color, align, HAND);
   /** The width of a line of text as a fraction of the frame width. */
   function widthOf(value, size, font = SERIF) {
-    meter.font = `400 100px ${font}`;
-    return Math.max(...String(value).split('\n').map(line => meter.measureText(line).width)) / 100 * em(size) / A;
+    let most = 0;
+    for (const line of String(value).split('\n')) {
+      const key = `${font}\n${line}`;
+      let w = widths.get(key);
+      if (w === undefined) { meter.font = `400 100px ${font}`; w = remember(widths, key, meter.measureText(line).width); }
+      most = Math.max(most, w);
+    }
+    return most / 100 * em(size) / A;
   }
   const handWidth = (value, size) => widthOf(value, size * HAND_SIZE, HAND);
   /** Where the ink of a line sits under its top, as fractions of the frame height: [top, bottom]. */
@@ -345,14 +358,18 @@ function pen(h, view, night) {
   /** Paper teeth along one edge of a sheet (left, right or bottom), in the flat paper colour. */
   function torn(id, x, y, w, hh, side, alpha = 1) {
     const depth = 3 * px, lap = .5 * px, along = side === 'bottom' ? w * A : hh, n = Math.max(3, Math.round(along / (5 * px)));
-    const B = 100, L = B * along / (depth + lap), inner = B * lap / (depth + lap), points = [[0, 0]];
-    for (let i = 0; i <= n; i++) {
-      points.push([inner + (.35 + .65 * jag(i + id.length * 7)) * (B - inner), i / n * L]);
-      if (i < n) points.push([inner + .15 * jag(i + .5) * (B - inner), (i + .5) / n * L]);
+    const B = 100, L = B * along / (depth + lap), inner = B * lap / (depth + lap), key = `${side} ${n} ${L} ${inner} ${id.length}`;
+    let d = edges.get(key);
+    if (d === undefined) {
+      const points = [[0, 0]];
+      for (let i = 0; i <= n; i++) {
+        points.push([inner + (.35 + .65 * jag(i + id.length * 7)) * (B - inner), i / n * L]);
+        if (i < n) points.push([inner + .15 * jag(i + .5) * (B - inner), (i + .5) / n * L]);
+      }
+      points.push([0, L]);
+      const at = ([a, b]) => side === 'right' ? [a, b] : side === 'left' ? [B - a, b] : [b, a];
+      d = remember(edges, key, `M${points.map(q => at(q).map(v => v.toFixed(1)).join(' ')).join(' L')} Z`);
     }
-    points.push([0, L]);
-    const at = ([a, b]) => side === 'right' ? [a, b] : side === 'left' ? [B - a, b] : [b, a];
-    const d = `M${points.map(q => at(q).map(v => v.toFixed(1)).join(' ')).join(' L')} Z`;
     const opts = { fill: alpha < 1 ? rgba(mix(PAPER, LAMP, lamp), alpha) : flat };
     if (side === 'bottom') h.path(id, d, { ...opts, x, y: y + hh - lap, w: w * A, h: depth + lap, viewBox: `0 0 ${L} ${B}` });
     else h.path(id, d, { ...opts, x: side === 'left' ? x - depth / A : x + w - lap / A, y, w: depth + lap, h: hh, viewBox: `0 0 ${B} ${L}` });

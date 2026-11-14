@@ -14,7 +14,7 @@ import { sfx } from './audio.js';
 import { t } from './i18n.js';
 import { rideStep, dolphinStep } from './dolphin-ride.js';
 import { createRipples } from './ripples.js';
-import { createUndersea } from './undersea.js';
+import { createUndersea, UNDERSEA_REACH } from './undersea.js';
 import { waveGLSL } from './wave-field.js';
 
 const TAU = Math.PI * 2;
@@ -580,13 +580,16 @@ export function createMarineLife(scene, { renderer = null, water = null } = {}) 
     d[o] = x; d[o + 1] = y; d[o + 2] = z; d[o + 3] = yaw; d[o + 4] = pitch; d[o + 5] = roll;
     d[o + 6] = phase % TAU; d[o + 7] = amp; d[o + 8] = k; d[o + 9] = scale; d[o + 10] = shown ? 1 : 0;   // phase wrapped: the shared clock is ~1e9 s
   }
+  // Written in two runs: the animals that show first (the main pass draws only those), then the hidden
+  // ones close enough to the camera to reach the undersea map. Hidden ones farther out are not drawn.
   function flush() {
+    const cx = cam ? cam.position.x : 0, cz = cam ? cam.position.z : 0, reach2 = cam ? UNDERSEA_REACH * UNDERSEA_REACH : Infinity;
     for (const key in pending) {
       const list = pending[key], d = list.data, mesh = meshes[key], swim = mesh.geometry.attributes.aSwim;
       let n = 0, shown = 0;
-      for (const front of [1, 0]) for (let i = 0; i < list.n; i++) {
-        const o = i * STRIDE;
-        if (d[o + 10] !== front) continue;
+      for (let run = 0; run < 2; run++) for (let i = 0; i < list.n; i++) {
+        const o = i * STRIDE, front = d[o + 10] === 1;
+        if (run === 0 ? !front : front || (d[o] - cx) ** 2 + (d[o + 2] - cz) ** 2 > reach2) continue;
         e.set(d[o + 4], d[o + 3], d[o + 5]); q.setFromEuler(e); p.set(d[o], d[o + 1], d[o + 2]);
         m.compose(p, q, d[o + 9] === 1 ? one : size3.setScalar(d[o + 9]));
         mesh.setMatrixAt(n, m);

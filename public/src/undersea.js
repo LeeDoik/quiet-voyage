@@ -7,6 +7,10 @@ import { waveGLSL } from './wave-field.js';
 // the surface, kept at its shallowest) and ocean-material.js darkens the light coming up from below
 // where the map says something is there. The map follows the camera's view of the water.
 export const UNDERSEA_SIZE = 128, UNDERSEA_DEPTH = 9;   // metres across; deeper than this is not seen
+// How far from the camera, along the water, an animal can still reach into the map: its centre lies
+// up to a third of its size ahead of the camera, its corners 0.71 of its size from the centre, and
+// the largest animal is about 16 m long. marine-life.js leaves animals farther out of the map's pass.
+export const UNDERSEA_REACH = UNDERSEA_SIZE * (.32 + .71) + 16;
 const RES = 512, LAYER = 5;
 
 export function createUndersea({ renderer, scene, meshes, uniforms }) {
@@ -14,7 +18,7 @@ export function createUndersea({ renderer, scene, meshes, uniforms }) {
   target.texture.minFilter = target.texture.magFilter = THREE.LinearFilter;
   uniforms.lifeMap.value = target.texture;
   const eye = new THREE.OrthographicCamera(-UNDERSEA_SIZE / 2, UNDERSEA_SIZE / 2, UNDERSEA_SIZE / 2, -UNDERSEA_SIZE / 2, 1, 200);
-  eye.layers.set(LAYER);
+  eye.layers.set(LAYER);   // the scene's lights are on every layer (world.js), so this pass gathers the same ones
   eye.up.set(0, 0, -1);
   const material = new THREE.ShaderMaterial({
     uniforms: { time: { value: 0 }, swimScale: { value: 0 }, swimRef: { value: 1 } },
@@ -35,7 +39,9 @@ export function createUndersea({ renderer, scene, meshes, uniforms }) {
     depthTest: false, depthWrite: false, side: THREE.DoubleSide,
   });
   // One material for every species: each mesh hands over its own swim scale just before it draws.
-  for (const mesh of Object.values(meshes)) {
+  // Birds fly over the water, never under it, so they stay out of the map.
+  const swimmers = Object.values(meshes).filter(mesh => mesh.userData.species !== 'gull');
+  for (const mesh of swimmers) {
     mesh.layers.enable(LAYER);
     mesh.onBeforeRender = (r, s, camera, geometry, used) => {
       if (used !== material) return;
@@ -45,9 +51,15 @@ export function createUndersea({ renderer, scene, meshes, uniforms }) {
     };
   }
   const colour = new THREE.Color(), forward = new THREE.Vector3();
+  let empty = false;   // the map was last drawn with nothing in it
   return {
     update(camera, waveT) {
       if (!camera) return;
+      // Nothing close enough to show, and the map already blank: no need to draw it again.
+      let any = false;
+      for (const mesh of swimmers) if (mesh.count > 0) { any = true; break; }
+      if (!any && empty) return;
+      empty = !any;
       // Centred where the camera looks at the water, snapped to whole texels so the shapes don't crawl.
       camera.getWorldDirection(forward);
       const ahead = Math.min(UNDERSEA_SIZE * .32, Math.max(0, camera.position.y) / Math.max(.15, -forward.y));
@@ -61,7 +73,11 @@ export function createUndersea({ renderer, scene, meshes, uniforms }) {
       renderer.getClearColor(colour);
       scene.overrideMaterial = material; scene.background = null; scene.fog = null;
       renderer.setRenderTarget(target); renderer.setClearColor(0x000000, 1); renderer.clear(true, false, false);
+      // The animals' places are in their instance matrices, so the scene's world matrices need no
+      // update for this pass: the main pass brings them up to date once a frame.
+      scene.matrixWorldAutoUpdate = false;
       renderer.render(scene, eye);
+      scene.matrixWorldAutoUpdate = true;
       scene.overrideMaterial = before.override; scene.background = before.background; scene.fog = before.fog;
       renderer.setRenderTarget(before.target); renderer.setClearColor(colour, before.alpha);
     },

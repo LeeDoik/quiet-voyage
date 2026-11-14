@@ -96,7 +96,7 @@ export function createWake(scene) {
             if (off * k < 0) off /= 1 + Math.abs(off * k) * 1.5;
             const v = (r * ROWS + i) * 2 + e;
             position[v * 3] = sx + rx * off; position[v * 3 + 1] = 0; position[v * 3 + 2] = sz + rz * off;
-            data.set([across * (side || 1), age, strength, side ? 0 : 1], v * 4);
+            data[v * 4] = across * (side || 1); data[v * 4 + 1] = age; data[v * 4 + 2] = strength; data[v * 4 + 3] = side ? 0 : 1;
             alongs[v] = behind + (p.bow ? -2.3 : 0);
           }
         }

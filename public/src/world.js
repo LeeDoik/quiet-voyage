@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { makeTree, foliageMaterial } from './foliage.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createWaterLOD } from './water-lod.js';
-import { createOceanMaterial } from './ocean-material.js';
+import { createOceanMaterial, setOceanWind } from './ocean-material.js';
 import { covePoint, coveSpec } from './sea.js';
 import { standardMaterial } from './materials.js';
 import { createIslands, flatten } from './islands.js';
@@ -22,6 +22,10 @@ export function createWorld(scene, renderer = null) {
   scene.fog = new THREE.FogExp2(0xb9d9d7, 0.00115);
   const hemi = new THREE.HemisphereLight(0xeaf6ed, 0x416e73, 2.0); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe3b9, 2.1); sun.position.set(-100, 120, -200); scene.add(sun, sun.target);
+  // Lights live on every layer, so a pass whose camera sees only some layers (the undersea map) still
+  // gathers the same lights: a different light set would make three.js pick every lit material's
+  // program again on the next pass, every frame.
+  hemi.layers.enableAll(); sun.layers.enableAll();
   // Sun (or moon) shadows on the higher tiers: an orthographic box ahead of the camera, where the
   // islands and boats in view are, moved in whole shadow texels so the edges never crawl.
   const SHADOW_HALF = 260, SHADOW_AHEAD = 220, shadowDir = new THREE.Vector3(), shadowAt = new THREE.Vector3();
@@ -136,7 +140,7 @@ export function createWorld(scene, renderer = null) {
     for(let i=0;i<SHORE_SLOTS;i++){const s=near[i];if(s){u.shores.value[i].set(s.x,s.z,s.rx,s.rz);u.shoreShape.value[i].set(s.rot,s.a2,s.a3,s.a5);}else u.shores.value[i].set(0,0,0,0);}
     shoreSpecs.length=0;shoreSpecs.push(...near);
   }
-  function reset(s=1){elapsed=0;clock=0;seed=Number.isFinite(s)?s:1;discoveries=[];events=[];shoreClock=0;rainbowLevel=0;lastWeather='clear';env.rain.value=0;env.gust=0;env.night.value=0;waterMat.uniforms.time.value=0;for(const v of waterMat.uniforms.vessels.value)v.set(0,0,0,-1);water.reset();islands.reset();life.reset();}
+  function reset(s=1){elapsed=0;clock=0;seed=Number.isFinite(s)?s:1;discoveries=[];events=[];shoreClock=0;rainbowLevel=0;lastWeather='clear';env.rain.value=0;env.gust=0;env.night.value=0;waterMat.uniforms.time.value=0;for(const v of waterMat.uniforms.vessels.value)v.set(0,0,0,-1);waterMat.uniforms.vesselCount.value=1;water.reset();islands.reset();life.reset();}
   /** `shared`: the server's world clock in seconds when online, so day, weather and wildlife match. */
   function update(dt,boat,shared=null,camera=null){
     elapsed+=dt;clock=(Number.isFinite(shared)?shared:elapsed)+(platform.dev?globalThis.__seaTimeShift??0:0);   // dev: __seaTimeShift seconds to look at another hour
@@ -150,7 +154,7 @@ export function createWorld(scene, renderer = null) {
     const edge=smoothEdge(Math.hypot(boat.x,boat.z));
     const sunY=8+260*elevation, moonY=40-260*elevation;   // the sun touches the sea as the light turns gold
     sky.material.uniforms.spin.value=p*Math.PI*2;   // the stars turn once a day
-    waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;waterMat.uniforms.wind.value.set(boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessels.value[0].set(boat.x,boat.z,boat.yaw,boat.speed);
+    waterMat.uniforms.warm.value=warm;waterMat.uniforms.time.value=elapsed;setOceanWind(waterMat.uniforms,boat.wind.direction,boat.wind.strength);waterMat.uniforms.vessels.value[0].set(boat.x,boat.z,boat.yaw,boat.speed);
     waterMat.uniforms.sunDir.value.set(-210,sunY,-650).normalize();
     // The moon rides opposite the sun's height, a little to the east of it.
     waterMat.uniforms.moonDir.value.set(230,moonY,-620).normalize();
@@ -199,10 +203,12 @@ export function createWorld(scene, renderer = null) {
   }
   reset();
   /** Other hulls the water should part around (nearest first, beyond the player's own). */
-  function vessels(list){const slots=waterMat.uniforms.vessels.value;for(let i=1;i<slots.length;i++){const v=list[i-1];if(v)slots[i].set(v.x,v.z,v.yaw,v.speed);else slots[i].set(0,0,0,-1);}}
+  function vessels(list){const slots=waterMat.uniforms.vessels.value;let n=1;for(let i=1;i<slots.length;i++){const v=list[i-1];if(v){slots[i].set(v.x,v.z,v.yaw,v.speed);n=i+1;}else slots[i].set(0,0,0,-1);}waterMat.uniforms.vesselCount.value=n;}
   /** A light pulse (own or another boat's): the island near it answers. Returns {spec} or null. */
   function respond(p){const spec=islands.respond(p.x,p.z,clock);if(!spec)return null;sfx.reply(spec.x,spec.z);return {spec,own:p.own};}
   return {reset,update,vessels,life,respond,waterUniforms:waterMat.uniforms,
+    /** Sun shadows on or off (a slow device gives them up: main.js). */
+    shadows(on){sun.castShadow=Boolean(on)&&quality.shadowMap>0;},
     prepare:(camera,frustum,boat,optimized)=>{water.prepare(camera,frustum,boat,optimized);islands.prepare(camera,frustum);},
     renderState:()=>water.state(),
     drain:()=>events.splice(0),

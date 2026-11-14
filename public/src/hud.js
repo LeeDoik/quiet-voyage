@@ -435,6 +435,36 @@ const BOXES = {
   [HudItemKind.Panel]: panelBox,
 };
 
+/** Same ids in the same order, each with the same fields as when last painted (arrays compared by
+ *  element). Runs every frame, so it allocates nothing. */
+function samePicture(items, painted) {
+  if (items.size !== painted.ids.length) return false;
+  let i = 0;
+  for (const id of items.keys()) {
+    if (id !== painted.ids[i] || !sameFields(items.get(id), painted.items[i])) return false;
+    i++;
+  }
+  return true;
+}
+
+function sameFields(a, b) {
+  if (a === b) return true;
+  let n = 0;
+  for (const k in a) {
+    n++;
+    const x = a[k], y = b[k];
+    if (x !== y && !sameArray(x, y)) return false;
+  }
+  for (const k in b) n--;
+  return n === 0;
+}
+
+function sameArray(x, y) {
+  if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+  for (let j = 0; j < x.length; j++) if (x[j] !== y[j]) return false;
+  return true;
+}
+
 /** Paint every item, then the flash over them, onto the overlay's canvas at the drawing size. */
 function paint(overlay, items, state, deps, res) {
   const { surface } = overlay;
@@ -587,9 +617,11 @@ function firstIds(items, limit) {
 
 /** What a game draws with: `__studio.hud.text(id, text)`, `.bar`, `.arc`, `.panel`, `.path`, `.image`, `.font`, and the rest. */
 function hudApi(items, state, res) {
-  /** Something to draw changed: repaint, and measure again. */
+  /** The items were edited: measure again, and repaint if the picture differs from the last one
+   *  painted. A game that clears and redraws its whole HUD every frame mostly draws the same picture,
+   *  and painting the full-frame canvas and uploading it is most of what the HUD costs. */
   function touch() {
-    state.dirty = true;
+    state.edited = true;
     state.version += 1;
   }
   function set(id, item) {
@@ -624,6 +656,7 @@ function hudApi(items, state, res) {
     items: () => [...items.keys()],
     enable: (on = true) => {
       state.enabled = Boolean(on);
+      state.dirty = true;
       touch();
     },
   };
@@ -684,9 +717,10 @@ function pendingOf(items, state, res) {
 export function createHud(deps) {
   const items = new Map();
   const overlay = createOverlay();
-  const state = { flashAlpha: 0, flashColor: "#ffffff", dirty: true, enabled: true, version: 0, fontsLoading: 0 };
+  const state = { flashAlpha: 0, flashColor: "#ffffff", dirty: true, edited: true, enabled: true, version: 0, fontsLoading: 0 };
   const res = { images: new Map() };
   let measured = null;
+  const painted = { ids: [], items: [] };   // the last paint, in paint order
 
   /** The measured layout, recomputed only when an item or the frame size changed. */
   function measuredNow() {
@@ -728,7 +762,14 @@ export function createHud(deps) {
       const cannotDraw = !renderer || typeof renderer.render !== "function" || !state.enabled;
       if (cannotDraw) return;
       if (items.size === 0 && state.flashAlpha <= 0) return;
-      if (state.dirty) paint(overlay, items, state, deps, res);
+      const size = drawingSize(deps), { surface } = overlay;
+      const resized = surface.width !== size.width || surface.height !== size.height;
+      if (state.dirty || resized || (state.edited && !samePicture(items, painted))) {
+        paint(overlay, items, state, deps, res);
+        painted.ids = [...items.keys()];
+        painted.items = [...items.values()];
+      }
+      state.edited = false;
       composeOver(renderer, overlay);
     },
     /**

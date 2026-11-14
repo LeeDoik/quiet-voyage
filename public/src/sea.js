@@ -16,8 +16,27 @@ const covePolygon=(()=>{
   for(let i=s.steps;i>=0;i--) add(i,118);
   return points;
 })();
-const polygons=[...islands.map(([x,z,rx,rz])=>Array.from({length:96},(_,i)=>[x+rx*Math.cos(i*Math.PI/48),z+rz*Math.sin(i*Math.PI/48)])),covePolygon];
+const polygons=[...islands.map(([x,z,rx,rz])=>Array.from({length:96},(_,i)=>[x+rx*Math.cos(i*Math.PI/48),z+rz*Math.sin(i*Math.PI/48)])),covePolygon]
+  .map(poly=>Float64Array.from(poly.flat()));   // x0,z0,x1,z1,...: the boat asks several times a step, so no garbage
 const generated=[];
+// polygonDistance's answer: signed distance (< 0 inside), the nearest coast point's x and z, inside (1) or not.
+const nearest=new Float64Array(4);
+/** Distance from (x, z) to one coast outline, into `nearest`. Numbers only, in a function of its own:
+ *  inside clearance the JIT could give up on this loop, and it then ran some fifteen times slower. */
+function polygonDistance(poly,x,z) {
+  let inside=false, near=Infinity, bx=0, bz=0;
+  for(let i=0,j=poly.length-2;i<poly.length;j=i,i+=2) {
+    const ax=poly[j],az=poly[j+1],cx=poly[i],cz=poly[i+1];
+    if((az>z)!=(cz>z)&&x<(cx-ax)*(z-az)/(cz-az)+ax) inside=!inside;
+    const dx=cx-ax,dz=cz-az;
+    const u=Math.max(0,Math.min(1,((x-ax)*dx+(z-az)*dz)/(dx*dx+dz*dz)));
+    const qx=ax+u*dx,qz=az+u*dz,ex=x-qx,ez=z-qz,d2=ex*ex+ez*ez;   // squared: one root per polygon
+    if(d2<near) { near=d2;bx=qx;bz=qz; }
+  }
+  const min=Math.hypot(x-bx,z-bz);
+  nearest[0]=inside?-min:min; nearest[1]=bx; nearest[2]=bz; nearest[3]=inside?1:0;
+}
+/** How far (x, z) is from the nearest coast or the map's edge (< 0 on land), and the outward normal there. */
 export function clearance(x,z) {
   let best={distance:Infinity,nx:0,nz:0};
   // Generated islands past the home waters, and the misty edge of the map.
@@ -28,21 +47,15 @@ export function clearance(x,z) {
   }
   const edge=edgeDistance(x,z);
   if(edge.distance<best.distance) best=edge;
-  if(Math.hypot(x-coveSpec.x,z-coveSpec.z)>420 && islands.every(([ix,iz,rx])=>Math.hypot(x-ix,z-iz)>rx*1.3+420)) return best;
+  let far=Math.hypot(x-coveSpec.x,z-coveSpec.z)>420;
+  for(let k=0;far&&k<islands.length;k++){const s=islands[k];far=Math.hypot(x-s[0],z-s[1])>s[2]*1.3+420;}
+  if(far) return best;
   for(const poly of polygons) {
-    let inside=false, min=Infinity, bx=0, bz=0;
-    for(let i=0,j=poly.length-1;i<poly.length;j=i++) {
-      const [ax,az]=poly[j], [cx,cz]=poly[i];
-      if((az>z)!=(cz>z)&&x<(cx-ax)*(z-az)/(cz-az)+ax) inside=!inside;
-      const dx=cx-ax,dz=cz-az;
-      const u=Math.max(0,Math.min(1,((x-ax)*dx+(z-az)*dz)/(dx*dx+dz*dz)));
-      const qx=ax+u*dx,qz=az+u*dz,d=Math.hypot(x-qx,z-qz);
-      if(d<min) { min=d;bx=qx;bz=qz; }
-    }
-    const distance=inside?-min:min;
+    polygonDistance(poly,x,z);
+    const distance=nearest[0];
     if(distance<best.distance) {
-      const sign=inside?-1:1, len=min||1;
-      best={distance,nx:(x-bx)/len*sign,nz:(z-bz)/len*sign};
+      const sign=nearest[3]?-1:1, len=Math.abs(distance)||1;
+      best={distance,nx:(x-nearest[1])/len*sign,nz:(z-nearest[2])/len*sign};
     }
   }
   return best;

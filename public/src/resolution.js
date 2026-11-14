@@ -4,29 +4,28 @@
 //
 // - Never below one pixel per CSS pixel: the HUD is painted at the same resolution, and text below
 //   that breaks up.
-// - "Slow" is judged against the best rate this screen reaches, not a fixed 60: a display or a
-//   power-saving mode that caps the frame rate at 30 is not a slow GPU, and fewer pixels would not
-//   make it faster.
 // - A drop must pay for itself: if the rate does not rise afterwards, the pixels were not the
-//   bottleneck, so the old ratio comes back and drops rest for a while. A raise that costs the rate
-//   is taken back the same way.
+//   bottleneck (a display or power-saving mode capping the rate at 30, or a busy CPU), so the old
+//   ratio comes back and drops rest, twice as long after each try that did not help. A raise that
+//   makes the game slow is taken back the same way.
+// - Sharpening waits for room: a rate near the best this screen has shown.
 // - Nothing is judged in the first seconds, while shaders compile and the world streams in.
+// - Still slow at the floor: `strained` is set, and the caller turns effects down instead.
 export const RES = {
   warmup: 6,          // seconds before the first judgement
   every: 2,           // seconds between judgements
-  slow: 46,           // below this many frames a second (or below `headroom` of the best) is slow
-  headroom: .8,
+  slow: 46,           // below this many frames a second is slow
   settle: .93,        // at this share of the best rate there is room to sharpen
   drop: .85, raise: 1.12,
   payoff: 1.08,       // a drop must lift the rate by this factor to stay
   raiseRest: 20,      // seconds after a drop before sharpening again
-  futileRest: 90,     // seconds without drops after one that did not help
+  futileRest: 90,     // seconds without drops after one that did not help (doubling each time)
   forget: 600,        // seconds over which the best rate seen fades (a move to another screen)
 };
 
 export function createResolution(max, start = max) {
   const min = Math.min(1, max);
-  return { min, max, ratio: Math.min(max, Math.max(min, start)), best: 0, warm: RES.warmup, clock: 0, raiseAfter: 0, dropAfter: 0, last: null };
+  return { min, max, ratio: Math.min(max, Math.max(min, start)), best: 0, warm: RES.warmup, clock: 0, raiseAfter: 0, dropAfter: 0, rest: RES.futileRest, last: null, strained: false };
 }
 
 /** One frame: `fps` is the rate measured over the last second (0 or null when unknown). Returns the ratio to draw at. */
@@ -38,11 +37,12 @@ export function resolutionStep(s, fps, dt) {
   s.clock += dt;
   if (s.clock < RES.every) return s.ratio;
   s.clock = 0;
-  const slow = fps < Math.min(RES.slow, s.best * RES.headroom);
+  const slow = fps < RES.slow;
+  s.strained = slow && s.ratio <= s.min + 1e-6;
   // Judge the last change first.
   const last = s.last; s.last = null;
   if (last?.kind === 'drop' && fps < last.fps * RES.payoff) {
-    s.ratio = last.from; s.dropAfter = RES.futileRest; return s.ratio;
+    s.ratio = last.from; s.dropAfter = s.rest; s.rest = Math.min(s.rest * 2, 720); return s.ratio;
   }
   if (last?.kind === 'raise' && slow) {
     s.ratio = last.from; s.raiseAfter = RES.futileRest; return s.ratio;

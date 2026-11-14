@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { env } from './sea.js';
+import { quality } from './quality.js';
 
 // Value noise as a texture: a 256² lattice of fixed values, linearly filtered, so an octave is one
 // fetch instead of four sine hashes (the sky and the water's reflection run it on every pixel).
@@ -108,7 +109,7 @@ export function createSky(scene, { warm, time, sunDir, moonDir }) {
           c+=skySun()*smoothstep(.3,.95,skyNoise(ring*5.+time*.03))*(.6+.4*skyNoise(ring*13.-time*.02))*pow(toSun,6.)*.16*warm*day;
         }
         c=mix(c,mix(vec3(1.,.97,.9),vec3(1.,.48,.2),warm)*1.5,smoothstep(.99962,.99972,toSun)*day);   // the sun's disc
-        vec4 cloud=skyClouds(d,base,5,true);
+        vec4 cloud=skyClouds(d,base,${quality.clouds},true);   // octaves by tier (quality.js)
         // Linear (as the sea mirrors it, ocean-material.js linearColor), then the renderer's tone
         // mapping and sRGB output, so the dome, the mirrored sky and the haze on islands agree.
         gl_FragColor=vec4(pow(mix(c,cloud.rgb,cloud.a),vec3(2.2)),1.);

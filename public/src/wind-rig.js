@@ -17,6 +17,24 @@ const sheetMaterial=new THREE.MeshStandardMaterial({color:0xd9cfb4,roughness:.9}
 const JIB_SHARE=.8;                                   // the jib is sheeted a little closer than the main
 const TRAVELLER=new THREE.Vector3(-1.42,.64,0), BOOM_SHEET_AT=1.55;
 
+/** Smooth vertex normals of a bent sail, every frame for each boat close by: three's
+ *  computeVertexNormals on the raw arrays (the same sums), without its per-vertex vector calls. */
+const plain=a=>a&&!a.isInterleavedBufferAttribute&&a.array instanceof Float32Array;
+function sailNormals(geometry){
+  const position=geometry.attributes.position,normal=geometry.attributes.normal,index=geometry.index;
+  if(!index||!plain(position)||!plain(normal)){geometry.computeVertexNormals();return;}
+  const p=position.array,n=normal.array,f=index.array;
+  n.fill(0);
+  for(let i=0;i<f.length;i+=3){
+    const a=f[i]*3,b=f[i+1]*3,c=f[i+2]*3;
+    const ux=p[c]-p[b],uy=p[c+1]-p[b+1],uz=p[c+2]-p[b+2],vx=p[a]-p[b],vy=p[a+1]-p[b+1],vz=p[a+2]-p[b+2];
+    const x=uy*vz-uz*vy,y=uz*vx-ux*vz,z=ux*vy-uy*vx;   // (c - b) x (a - b)
+    n[a]+=x;n[a+1]+=y;n[a+2]+=z;n[b]+=x;n[b+1]+=y;n[b+2]+=z;n[c]+=x;n[c+1]+=y;n[c+2]+=z;
+  }
+  for(let i=0;i<n.length;i+=3){const l=Math.sqrt(n[i]*n[i]+n[i+1]*n[i+1]+n[i+2]*n[i+2])||1;n[i]/=l;n[i+1]/=l;n[i+2]/=l;}
+  normal.needsUpdate=true;
+}
+
 /** Per-vertex hinge data for one sail: its luff line, and for each vertex where it hangs from it. */
 function hinge(mesh){
   const geometry=mesh.geometry, uv=geometry.attributes.uv;
@@ -86,7 +104,7 @@ export function createWindRig(model){
           const fill=side*(s.shape[i*2]*(.35+.65*pressure)+Math.sin(time*9+y*2)*.025*luffing*u);
           positions.setXYZ(i,s.foot[k]+bx+n.x*fill,y+n.y*fill,s.foot[k+2]+bz+n.z*fill);
         }
-        positions.needsUpdate=true;s.mesh.geometry.computeVertexNormals();s.mesh.geometry.computeBoundingSphere();
+        positions.needsUpdate=true;sailNormals(s.mesh.geometry);s.mesh.geometry.computeBoundingSphere();
       }
       if(boom){
         boom.rotation.y=angle;

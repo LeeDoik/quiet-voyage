@@ -70,6 +70,7 @@ export function createLantern() {
 export function createBoatLantern(scene) {
   const parts = createLantern(), light = new THREE.PointLight(AMBER, 0, 7, 2), swing = { x: 0, z: 0 };
   light.userData.tag = 'lantern';
+  light.layers.enableAll();   // seen by every pass's camera, as world.js does for the sun
   scene.add(light);
   return { ...parts, update(dt, t, boat) {
     // All lanterns share these, so the player's boat sets them once a frame.

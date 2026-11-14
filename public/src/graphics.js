@@ -1,11 +1,11 @@
 import { platform } from './platform.js';
 import { createResolution, resolutionStep } from './resolution.js';
 
-export function createGraphics(renderer,scene){
+export function createGraphics(renderer,scene,{relieve=null}={}){
   let shown=false,held=false,frames=0,suspended=false;
   // Web build: hold the frame rate by trading resolution, within the device's sharpness (resolution.js).
   const res=createResolution(Math.min(globalThis.devicePixelRatio||1,2),renderer.getPixelRatio());
-  let ratio=renderer.getPixelRatio();
+  let ratio=renderer.getPixelRatio(),relieveAfter=0;
   let timing={fps:null,meanMs:null,p95Ms:null,samples:0};
   let resources={meshes:0,materials:0,bufferMiB:0};
   let draw={calls:0,triangles:0,lines:0,points:0};
@@ -40,6 +40,9 @@ export function createGraphics(renderer,scene){
     adapt(dt){
       if(!platform.web||suspended||status!=='live')return;
       const next=resolutionStep(res,timing.fps,dt);
+      // Already at the sharpness floor and still slow: give up an effect, one every few seconds.
+      relieveAfter-=dt;
+      if(res.strained&&relieve&&relieveAfter<=0){res.strained=false;relieveAfter=6;res.warm=3;relieve();}
       if(Math.abs(next-ratio)<.01)return;
       ratio=next;renderer.setPixelRatio(ratio);renderer.setSize(innerWidth,innerHeight,false);
     },

@@ -9,10 +9,21 @@ function run(s, seconds, fps) {
   return seen;
 }
 
-{ // A screen capped at 30 fps (power saving, a 30 Hz display): fewer pixels would not help, so none are taken.
+{ // A screen capped at 30 fps (power saving, a 30 Hz display): fewer pixels do not help, so a try
+  // is undone at once and tried again ever more rarely; the picture stays sharp.
   const s = createResolution(2);
-  const seen = run(s, 120, () => 30);
-  assert.equal(Math.min(...seen), 2, 'a capped frame rate never costs resolution');
+  const seen = run(s, 600, () => 30);
+  const sharp = seen.filter(r => r === 2).length / seen.length;
+  assert(sharp > .98, `a capped frame rate keeps full resolution (${(sharp * 100).toFixed(1)}% of the time)`);
+  assert.equal(seen.at(-1), 2);
+  let tries = 0; for (let i = 1; i < seen.length; i++) if (seen[i] < seen[i - 1]) tries++;
+  assert(tries <= 4, `a few tries in ten minutes (${tries})`);
+}
+{ // Slow from the first frame (a weak GPU never shows a better rate): it still drops while that helps.
+  const s = createResolution(2);
+  const seen = run(s, 60, r => Math.min(60, 22 / (r * r)));
+  assert.equal(seen.at(-1), 1, 'down to the floor');
+  assert(s.strained, 'and strained there, so effects go next');
 }
 { // A fill-bound GPU on a 60 Hz screen: the rate rises as pixels go, so it drops until it holds, and no further.
   const s = createResolution(2);
@@ -47,3 +58,12 @@ function run(s, seconds, fps) {
   assert.equal(Math.min(...seen), 2, 'no change during warm-up');
 }
 console.log('resolution: capped screens keep resolution, fill-bound drops, futile drops undone, floor at 1, sharpen, warm-up passed');
+
+{ // At the floor and still slow: strained, so the game turns effects down instead.
+  const s = createResolution(1);
+  run(s, 20, () => 60);
+  run(s, 10, () => 20);
+  assert.equal(s.ratio, 1); assert(s.strained, 'strained at the floor');
+  run(s, 10, () => 60); assert(!s.strained, 'relieved once the rate is back');
+}
+console.log('resolution: strain at the floor passed');
